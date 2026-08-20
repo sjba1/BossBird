@@ -1,0 +1,1645 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<!-- viewport 关掉缩放，手机上点按更跟手 -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Boss Bird - 飞行小鸟</title>
+<!-- PWA：让游戏能「添加到主屏幕」并离线缓存 -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#15162b">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body {
+    height:100%;
+    background:#15162b;
+    display:flex; align-items:center; justify-content:center;
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    overflow:hidden;
+  }
+  #wrap { position:relative; }
+  /* 画布就是整个游戏界面，所有画面都用 JS 画在上面 */
+  canvas {
+    display:block;
+    background:#70c5ce;
+    border-radius:14px;
+    box-shadow:0 12px 50px rgba(0,0,0,.45);
+    touch-action:none;            /* 阻止手机上滑动误触 */
+  }
+  /* 登录浮层 */
+  #loginOverlay {
+    position:fixed; inset:0;
+    background:rgba(10,11,25,.93);
+    display:flex; align-items:center; justify-content:center;
+    z-index:50;
+  }
+  .loginCard {
+    width:300px; max-width:86vw;
+    background:#1e2040; border:1px solid #33345f; border-radius:16px;
+    padding:22px 20px; box-shadow:0 12px 50px rgba(0,0,0,.5);
+  }
+  .loginTitle { color:#ffe08a; text-align:center; font-size:20px; font-weight:bold; margin-bottom:16px; }
+  #loginOverlay input {
+    width:100%; box-sizing:border-box; padding:11px 12px; margin-bottom:10px;
+    border-radius:10px; border:1px solid #3a3c66; background:#15162b; color:#fff; font-size:15px;
+  }
+  .liErr { color:#ff8080; font-size:12px; min-height:16px; margin-bottom:8px; text-align:center; }
+  .liBtn { width:100%; padding:11px; border:none; border-radius:10px; font-size:15px; font-weight:bold; margin-bottom:8px; cursor:pointer; }
+  .liPrimary { background:#ffd33d; color:#3a2c00; }
+  .liBtn:not(.liPrimary) { background:#3a3c66; color:#fff; }
+  .liGuest { width:100%; background:none; border:none; color:#8a8cc0; font-size:12px; cursor:pointer; text-decoration:underline; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game" width="360" height="640"></canvas>
+</div>
+
+<!-- 登录 / 注册浮层：未登录时盖在游戏上方，内分「登录视图」「注册视图」两层 -->
+<div id="loginOverlay">
+  <div class="loginCard">
+    <!-- 登录视图 -->
+    <div id="loginView">
+      <div class="loginTitle">Boss Bird 登录</div>
+      <input id="liUser" type="text" placeholder="用户名" autocomplete="username" maxlength="20">
+      <input id="liPass" type="password" placeholder="密码" autocomplete="current-password" maxlength="30">
+      <div id="liErr" class="liErr"></div>
+      <button id="liLogin" class="liBtn liPrimary">登录</button>
+      <button id="liToRegister" class="liBtn">注册新账号</button>
+      <button id="liGuest" class="liGuest">游客试玩（不记录成绩）</button>
+    </div>
+    <!-- 注册视图（独立界面） -->
+    <div id="registerView" style="display:none">
+      <div class="loginTitle">注册新账号</div>
+      <input id="rgUser" type="text" placeholder="用户名（2-20 位）" autocomplete="username" maxlength="20">
+      <input id="rgPass" type="password" placeholder="密码（至少 6 位）" autocomplete="new-password" maxlength="30">
+      <input id="rgPass2" type="password" placeholder="确认密码" autocomplete="new-password" maxlength="30">
+      <div id="rgErr" class="liErr"></div>
+      <button id="rgRegister" class="liBtn liPrimary">确认注册</button>
+      <button id="rgBack" class="liBtn">返回登录</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* =========================================================
+   Boss Bird —— 一个极简的「像素小鸟 / Flappy Bird」克隆
+   全部逻辑都在这一个文件里，零依赖，双击即可运行。
+   想改难度？往下看代码里的「可调参数」区块。
+   ========================================================= */
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const W = canvas.width;   // 画布宽 360
+const H = canvas.height;  // 画布高 640
+
+/* ---------- 可调参数（改这里就能调难度/手感）---------- */
+const GRAVITY   = 0.43;   // 重力：越大下落越快
+const FLAP      = -8;     // 拍翅膀的向上速度（负数=向上）
+const PIPE_W    = 58;     // 管道宽度
+const GAP       = 160;    // 上下管道之间的缝隙高度
+const SPEED     = 2.2;    // 管道向左移动的速度
+const SPAWN_EVERY = 95;   // 每隔多少帧生成一根新管道
+const GROUND_H  = 60;     // 底部地面高度
+const MIN_PIPE_SPACING = 160;  // 相邻管道最小水平间距（>PIPE_W，杜绝两管重合）
+const MAX_GAP_Y_DELTA  = 150;  // 相邻管道缝隙中心最大垂直落差（杜绝"必死"之字形）
+/* -------------------------------------------------------- */
+
+/* ---------- 音效系统（Web Audio API 合成，零外部文件）---------- */
+let audioCtx = null;
+let muted = false;
+
+function initAudio() {
+  if (!audioCtx) {
+    try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {}
+  }
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+}
+
+// 播放一个指定频率、时长、波形、音量的纯音
+function playTone(freq, dur, type, vol) {
+  if (!audioCtx || muted) return;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = type || 'sine';
+  osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+  gain.gain.setValueAtTime(vol || 0.12, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+  osc.connect(gain); gain.connect(audioCtx.destination);
+  osc.start(); osc.stop(audioCtx.currentTime + dur);
+}
+
+// 播放频率从 freq1 滑到 freq2 的音
+function playSlide(freq1, freq2, dur, type, vol) {
+  if (!audioCtx || muted) return;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = type || 'sine';
+  osc.frequency.setValueAtTime(freq1, audioCtx.currentTime);
+  osc.frequency.exponentialRampToValueAtTime(freq2, audioCtx.currentTime + dur);
+  gain.gain.setValueAtTime(vol || 0.12, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+  osc.connect(gain); gain.connect(audioCtx.destination);
+  osc.start(); osc.stop(audioCtx.currentTime + dur);
+}
+
+// 播放一段滤波白噪声（用于爆炸/击碎音效）
+function playNoise(dur, vol, filterFreq) {
+  if (!audioCtx || muted) return;
+  const bs = Math.floor(audioCtx.sampleRate * dur);
+  const buf = audioCtx.createBuffer(1, bs, audioCtx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < bs; i++) d[i] = Math.random() * 2 - 1;
+  const noise = audioCtx.createBufferSource(); noise.buffer = buf;
+  const filter = audioCtx.createBiquadFilter();
+  filter.type = 'lowpass'; filter.frequency.value = filterFreq || 800;
+  const gain = audioCtx.createGain();
+  gain.gain.setValueAtTime(vol || 0.15, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+  noise.connect(filter); filter.connect(gain); gain.connect(audioCtx.destination);
+  noise.start(); noise.stop(audioCtx.currentTime + dur);
+}
+
+// 各事件音效
+function sfxFlap()   { playSlide(420, 180, 0.07, 'square', 0.06); }
+function sfxCoin()   { playTone(988, 0.06, 'sine', 0.12); setTimeout(() => playTone(1319, 0.1, 'sine', 0.1), 50); }
+function sfxCrush()  { playNoise(0.35, 0.18, 700); }
+function sfxShield() { playSlide(500, 1200, 0.12, 'sine', 0.12); }
+function sfxDeath()  { playSlide(350, 60, 0.6, 'sawtooth', 0.15); }
+function sfxFruit(t) {
+  if (t === 1)      playSlide(300, 900, 0.18, 'square', 0.1);   // 红橙：上升爆破
+  else if (t === 2) playSlide(500, 800, 0.15, 'sine', 0.1);     // 蓝：平滑上升
+  else              playSlide(400, 120, 0.2, 'triangle', 0.1);  // 灰：下降
+}
+function sfxScore()  { playTone(660, 0.05, 'sine', 0.08); }
+
+/* ---------- 难度递增系统：随分数提升，管道变快/缝隙变窄/生成更密 ---------- */
+// 每 15 分提升一级，上限 10 级
+function getDifficulty() { return Math.min(Math.floor(score / 15), 10); }
+// 当前管道移动速度（2.2 -> 3.7）
+function curSpeed() { return SPEED + getDifficulty() * 0.15; }
+// 当前缝隙高度（160 -> 100，有下限保护）
+function curGap()   { return Math.max(GAP - getDifficulty() * 6, 100); }
+// 当前管道生成间隔帧数（95 -> 55）
+function curSpawn() { return Math.max(SPAWN_EVERY - getDifficulty() * 4, 55); }
+
+// 天空渐变色随难度变化：白天 -> 黄昏 -> 夜晚
+const SKY_GRADIENTS = [
+  ['#4ec0ca', '#9be7d6'],  // 0  白天
+  ['#5bb8d4', '#8fdcc8'],  // 1
+  ['#7aafdc', '#8ec8e0'],  // 2
+  ['#a0a0e0', '#90b8d8'],  // 3
+  ['#d080b0', '#b080d0'],  // 4  黄昏
+  ['#e07060', '#c06080'],  // 5
+  ['#6040a0', '#303080'],  // 6
+  ['#403060', '#201040'],  // 7
+  ['#2a1840', '#100820'],  // 8
+  ['#1a1030', '#080418'],  // 9
+  ['#0c0818', '#040208'],  // 10 夜晚
+];
+
+// 本局统计：吃金币数、击碎管道数、吃果实数
+let coinsEaten = 0;
+let pipesCrushed = 0;
+let fruitsEaten = 0;
+let newRecord = false;   // 本局是否打破最高分
+
+// 游戏状态机：'ready'(待机) -> 'playing'(进行中) -> 'over'(结束)
+let state = 'ready';
+let score = 0;
+let best  = 0;   // 最高分：登录后按用户载入（见 loginAs）
+let frame = 0;
+
+// 小鸟对象：位置、速度、半径、是否受击
+const bird = {
+  x: 80, y: H / 2, r: 14, baseR: 14,   // baseR = 初始半径，吃果实会改变 r
+  vy: 0,
+  hurt: false,
+  shield: 0,    // 护盾层数（可叠加）
+  invuln: 0,    // 无敌帧倒计时（护盾抵挡后短暂无敌）
+};
+
+// 管道数组，每根管道记录自己的 x 坐标、缝隙位置 gapY、是否已计分
+let pipes = [];
+
+// 粒子数组（拍翅膀时喷在鸟后面的特效）
+let particles = [];
+
+// 金币数组：游戏中随机刷新，吃到 +1 分
+let coins = [];
+let coinSpawnTimer = 0;
+
+// 技能果实数组：随机刷新，3种类型
+//   type 1: 红橙色 — 击碎前方3个管道 + 加3分
+//   type 2: 蓝色   — 护盾+2（鸟体积变大一点）
+//   type 3: 灰色   — 分数-2（鸟体积明显变小）
+let fruits = [];
+let fruitSpawnTimer = 0;
+
+// 护盾计数器：每飞过5个管道（非击碎）获得1个护盾
+let pipesPassedForShield = 0;
+
+// 背景云朵：带漂移 + 尾部粒子拖尾 + 立体渐变
+const clouds = [
+  { x: 60,  y: 120, s: 1.0, trail: [] },
+  { x: 270, y: 200, s: 0.8, trail: [] },
+  { x: 180, y: 90,  s: 0.6, trail: [] },
+];
+
+// 角色皮肤：默认款一直可用，其余按「历史最高分」解锁（多角色解锁不同皮肤）
+const SKINS = [
+  { id:0, name:'小黄',     unlock:0,  body:'#ffd33d', wing:'#f7b500', beak:'#ff7a00', crown:false, glow:false },
+  { id:1, name:'小蓝',     unlock:10, body:'#4ec0ff', wing:'#2b8fd6', beak:'#ff9a3d', crown:false, glow:false },
+  { id:2, name:'薄荷',     unlock:15, body:'#5ee2a8', wing:'#34b984', beak:'#ff6f91', crown:false, glow:false },
+  { id:3, name:'黄金神鸟', unlock:20, body:null,     wing:'#b8860b', beak:'#ff4500', crown:true,  glow:true  },
+];
+let currentSkin = Number(localStorage.getItem('bossBirdSkin') || 0);
+if (!isUnlocked(SKINS[currentSkin])) currentSkin = 0;  // 防止选了已锁皮肤
+let unlockMsg = '';        // 解锁提示文字
+let unlockMsgTimer = 0;    // 提示剩余帧数
+let skinHit = [];          // 皮肤选择区的点击命中框（每帧重算）
+
+// 某皮肤是否已解锁（依据历史最高分）
+function isUnlocked(s) { return best >= s.unlock; }
+
+/* ---------- 初始化 / 重置 ---------- */
+function reset() {
+  state = 'ready';
+  score = 0;
+  frame = 0;
+  bird.y = H / 2;
+  bird.vy = 0;
+  bird.hurt = false;
+  bird.shield = 0;
+  bird.invuln = 0;
+  bird.r = bird.baseR;       // 重置鸟的半径（吃果实可能改变过）
+  pipes = [];
+  particles = [];
+  coins = [];
+  coinSpawnTimer = 0;
+  fruits = [];
+  fruitSpawnTimer = 0;
+  pipesPassedForShield = 0;
+  coinsEaten = 0;
+  pipesCrushed = 0;
+  fruitsEaten = 0;
+  newRecord = false;
+}
+
+/* ---------- 玩家操作：拍翅膀 / 开始 / 重开 ---------- */
+function flap() {
+  if (!loggedIn) return;   // 未登录（浮层盖着）不响应
+  initAudio();   // 首次操作时初始化音频（浏览器要求用户交互后才能播放）
+  if (state === 'ready') {
+    state = 'playing';
+    bird.vy = FLAP;
+    spawnParticles();
+    sfxFlap();
+  } else if (state === 'playing') {
+    bird.vy = FLAP;
+    spawnParticles();
+    sfxFlap();
+  } else if (state === 'over') {
+    reset();   // 结束后点一下重新开始
+  }
+}
+
+/* ---------- 拍翅膀时在鸟后面喷出粒子 ---------- */
+function spawnParticles() {
+  // 鸟往上飞，粒子留在其下方/后方，向斜下散开并逐渐淡出
+  const n = 7;
+  for (let i = 0; i < n; i++) {
+    particles.push({
+      x: bird.x - bird.r * 0.4,
+      y: bird.y + bird.r * 0.6,
+      vx: (Math.random() - 0.5) * 1.6 - 0.4,  // 略向左后
+      vy: Math.random() * 1.6 + 0.4,           // 向下飘
+      life: 1,                                  // 1 -> 0 表示淡出
+      size: Math.random() * 3 + 2,
+      color: Math.random() < 0.5 ? '#ffffff' : '#ffe08a',
+    });
+  }
+  // 黄金神鸟：拍翅时额外喷金色星光，更华丽
+  if (SKINS[currentSkin].glow) {
+    for (let i = 0; i < 3; i++) {
+      particles.push({
+        x: bird.x - bird.r * 0.4 + (Math.random() - 0.5) * 12,
+        y: bird.y + bird.r * 0.6 + (Math.random() - 0.5) * 12,
+        vx: (Math.random() - 0.5) * 2,
+        vy: Math.random() * 1.5 + 0.5,
+        life: 1,
+        size: Math.random() * 2 + 1.5,
+        color: '#ffe66d',
+      });
+    }
+  }
+}
+
+/* ---------- 护盾破碎特效：以鸟为中心炸开一圈蓝色粒子 ---------- */
+function spawnShieldBreak() {
+  const n = 16;
+  for (let i = 0; i < n; i++) {
+    const a = (Math.PI * 2 * i) / n;
+    const sp = Math.random() * 2 + 1.5;
+    particles.push({
+      x: bird.x,
+      y: bird.y,
+      vx: Math.cos(a) * sp,
+      vy: Math.sin(a) * sp,
+      life: 1,
+      size: Math.random() * 3 + 2,
+      color: '#5ad1ff',
+    });
+  }
+}
+
+/* ---------- 生成一根新管道 ---------- */
+function spawnPipe() {
+  // 间距守卫：上一根还没离开右边界足够距离就不生成，防止两管视觉/碰撞重合
+  if (pipes.length) {
+    let lastX = -Infinity;
+    for (const p of pipes) if (p.x > lastX) lastX = p.x;
+    if (lastX > W - MIN_PIPE_SPACING) return;
+  }
+
+  const margin = 60;
+  const g = curGap();                          // 当前难度下的缝隙高度
+  let gapY = margin + Math.random() * (H - margin * 2 - GROUND_H - g);
+
+  // 限制与上一根管道缝隙的垂直落差，保证路径"走得通"：
+  // 难度只来自缝隙变窄 / 提速 / 变密，而不是造出走不过去的必死布局
+  if (pipes.length) {
+    let prev = null, prevX = -Infinity;
+    for (const p of pipes) if (p.x > prevX) { prevX = p.x; prev = p; }
+    const prevCenter = prev.gapY + prev.gap / 2;
+    const newCenter  = gapY + g / 2;
+    const delta = newCenter - prevCenter;
+    if (delta > MAX_GAP_Y_DELTA)       gapY -= (delta - MAX_GAP_Y_DELTA);
+    else if (delta < -MAX_GAP_Y_DELTA) gapY += (-MAX_GAP_Y_DELTA - delta);
+    gapY = Math.max(margin, Math.min(gapY, H - margin - GROUND_H - g));
+  }
+
+  const pipeX = W;
+  // 检查金币：若有则把缝隙对准金币
+  for (const c of coins) {
+    if (c.x + c.r > pipeX && c.x - c.r < pipeX + PIPE_W) {
+      const coinY = c.y + Math.sin(c.bob) * 4;
+      if (coinY - c.r < gapY || coinY + c.r > gapY + g) {
+        gapY = coinY - g / 2;
+        gapY = Math.max(margin, Math.min(gapY, H - margin - GROUND_H - g));
+      }
+    }
+  }
+  // 检查果实：避免管道覆盖果实
+  for (const f of fruits) {
+    if (f.x + f.r > pipeX && f.x - f.r < pipeX + PIPE_W) {
+      const fruitY = f.y + Math.sin(f.bob) * 4;
+      if (fruitY - f.r < gapY || fruitY + f.r > gapY + g) {
+        gapY = fruitY - g / 2;
+        gapY = Math.max(margin, Math.min(gapY, H - margin - GROUND_H - g));
+      }
+    }
+  }
+  pipes.push({ x: pipeX, gapY: gapY, gap: g, passed: false });
+}
+
+/* ---------- 生成一枚金币（不会与任何管道实体重叠）---------- */
+function spawnCoin() {
+  const cx = W + 20;
+  const cr = 11;
+  // 找出 x 范围与金币重叠的管道，金币必须落在它们的缝隙内
+  let gapPipe = null;
+  for (const p of pipes) {
+    if (cx + cr > p.x && cx - cr < p.x + PIPE_W) {
+      if (gapPipe) return;   // 同时撞上两根管道（极罕见），放弃这枚
+      gapPipe = p;
+    }
+  }
+  let y;
+  if (gapPipe) {
+    // 金币 x 与某根管道重叠 -> 放在该管道缝隙内（留安全边距）
+    const pad = cr + 6;
+    const minY = gapPipe.gapY + pad;
+    const maxY = gapPipe.gapY + gapPipe.gap - pad;
+    if (maxY < minY) return;  // 缝隙太窄放不下，放弃
+    y = minY + Math.random() * (maxY - minY);
+  } else {
+    // 没有管道挡着，随机高度
+    y = 80 + Math.random() * (H - GROUND_H - 160);
+  }
+  coins.push({ x: cx, y: y, r: cr, spin: 0, eaten: false, bob: Math.random() * Math.PI * 2 });
+}
+
+/* ---------- 吃到金币时的金色火花特效 ---------- */
+function spawnCoinSparkle(x, y) {
+  for (let i = 0; i < 12; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const sp = Math.random() * 3 + 1;
+    particles.push({
+      x: x, y: y,
+      vx: Math.cos(a) * sp,
+      vy: Math.sin(a) * sp,
+      life: 1,
+      size: Math.random() * 3 + 1.5,
+      color: Math.random() < 0.5 ? '#ffd700' : '#fff6c2',
+    });
+  }
+}
+
+/* ---------- 生成一颗技能果实（不会与管道实体重叠）---------- */
+function spawnFruit() {
+  const cx = W + 20;
+  const cr = 13;
+  // 随机选择果实类型：1=红橙(碎管), 2=蓝(护盾), 3=灰(减分缩小)
+  const type = 1 + Math.floor(Math.random() * 3);
+  // 与金币相同的防重叠逻辑
+  let gapPipe = null;
+  for (const p of pipes) {
+    if (cx + cr > p.x && cx - cr < p.x + PIPE_W) {
+      if (gapPipe) return;   // 同时撞上两根管道（极罕见），放弃
+      gapPipe = p;
+    }
+  }
+  let y;
+  if (gapPipe) {
+    const pad = cr + 6;
+    const minY = gapPipe.gapY + pad;
+    const maxY = gapPipe.gapY + gapPipe.gap - pad;
+    if (maxY < minY) return;
+    y = minY + Math.random() * (maxY - minY);
+  } else {
+    y = 80 + Math.random() * (H - GROUND_H - 160);
+  }
+  fruits.push({ x: cx, y: y, r: cr, type: type, spin: 0, eaten: false, bob: Math.random() * Math.PI * 2 });
+}
+
+/* ---------- 吃到果实时的爆裂特效 ---------- */
+function spawnFruitEffect(x, y, type) {
+  let colors;
+  if (type === 1) colors = ['#ff4500', '#ff8c00', '#ff6347'];
+  else if (type === 2) colors = ['#4ec0ff', '#7ec8ff', '#2b8fd6'];
+  else colors = ['#aaa', '#888', '#ccc'];
+  for (let i = 0; i < 18; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const sp = Math.random() * 3.5 + 1;
+    particles.push({
+      x: x, y: y,
+      vx: Math.cos(a) * sp,
+      vy: Math.sin(a) * sp,
+      life: 1,
+      size: Math.random() * 3.5 + 2,
+      color: colors[Math.floor(Math.random() * colors.length)],
+    });
+  }
+}
+
+/* ---------- 击碎管道的碎片爆炸特效 ---------- */
+function spawnPipeCrushEffect(x, gapY, gap) {
+  // 上管道碎片
+  for (let i = 0; i < 12; i++) {
+    particles.push({
+      x: x + Math.random() * PIPE_W,
+      y: Math.random() * gapY,
+      vx: (Math.random() - 0.5) * 5,
+      vy: (Math.random() - 0.5) * 4 - 1,
+      life: 1,
+      size: Math.random() * 4 + 2,
+      color: Math.random() < 0.5 ? '#5cb85c' : '#4cae4c',
+    });
+  }
+  // 下管道碎片
+  for (let i = 0; i < 12; i++) {
+    particles.push({
+      x: x + Math.random() * PIPE_W,
+      y: gapY + gap + Math.random() * (H - GROUND_H - gapY - gap),
+      vx: (Math.random() - 0.5) * 5,
+      vy: (Math.random() - 0.5) * 4 - 1,
+      life: 1,
+      size: Math.random() * 4 + 2,
+      color: Math.random() < 0.5 ? '#5cb85c' : '#4cae4c',
+    });
+  }
+}
+
+/* ---------- 应用果实效果 ---------- */
+function applyFruitEffect(type, x, y) {
+  spawnFruitEffect(x, y, type);
+  sfxFruit(type);
+  fruitsEaten++;
+
+  if (type === 1) {
+    // 红橙色：击碎前方3个管道 + 加3分
+    const ahead = pipes
+      .filter(p => p.x + PIPE_W > bird.x - bird.r)
+      .sort((a, b) => a.x - b.x);
+    const toCrush = ahead.slice(0, 3);
+    for (const p of toCrush) {
+      spawnPipeCrushEffect(p.x, p.gapY, p.gap);
+      pipesCrushed++;
+    }
+    pipes = pipes.filter(p => !toCrush.includes(p));
+    score += 3;
+    sfxCrush();
+  } else if (type === 2) {
+    // 蓝色：护盾 +2，鸟体积变大一点
+    bird.shield += 2;
+    bird.r = Math.min(bird.r + 2, bird.baseR + 6);
+  } else {
+    // 灰色：扣 2 分，鸟体积明显变小（与蓝色护盾果对称：蓝 +3、灰 -3，范围 ±6）
+    score = Math.max(0, score - 2);
+    bird.r = Math.max(bird.r - 3, bird.baseR - 6);
+  }
+}
+
+/* ---------- 每帧更新逻辑 ---------- */
+function update() {
+  // 粒子始终更新（任何状态下都继续飘散、淡出）
+  for (const p of particles) {
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vy += 0.05;     // 粒子也受一点重力
+    p.life -= 0.04;   // 逐渐淡出
+  }
+  particles = particles.filter(p => p.life > 0);
+
+  // 云朵漂移 + 尾部粒子生成（任何状态下都更新，让背景有生命力）
+  for (const cl of clouds) {
+    cl.x -= 0.3 * cl.s;                // 缓慢向左飘
+    if (cl.x < -60) cl.x = W + 50;      // 飘出左边后从右边回来
+    cl.bobPhase = (cl.bobPhase || 0) + 0.02;
+    // 随机在尾部（左侧）生成一团模糊粒子，模拟云尾消散
+    if (Math.random() < 0.18) {
+      cl.trail.push({
+        x: cl.x - 24 * cl.s + (Math.random() - 0.5) * 10,
+        y: cl.y + (Math.random() - 0.5) * 16 * cl.s + Math.sin(cl.bobPhase) * 3,
+        vx: -0.3 - Math.random() * 0.4,
+        vy: (Math.random() - 0.5) * 0.25,
+        life: 1,
+        size: Math.random() * 7 * cl.s + 4,
+      });
+    }
+    // 更新云尾粒子
+    for (const tp of cl.trail) {
+      tp.x += tp.vx;
+      tp.y += tp.vy;
+      tp.life -= 0.012;
+      tp.size *= 0.99;
+    }
+    cl.trail = cl.trail.filter(tp => tp.life > 0);
+  }
+
+  if (state === 'playing') {
+    // 1. 小鸟受重力影响下落
+    bird.vy += GRAVITY;
+    bird.y  += bird.vy;
+    if (bird.invuln > 0) bird.invuln--;   // 无敌帧倒计时
+
+    // 2. 定时生成管道
+    frame++;
+    if (frame % curSpawn() === 0) spawnPipe();
+
+    // 3. 管道向左移动，并给穿过的管道计分
+    const spd = curSpeed();
+    for (const p of pipes) {
+      p.x -= spd;
+      if (!p.passed && p.x + PIPE_W < bird.x) {
+        p.passed = true;
+        score++;
+        pipesPassedForShield++;               // 飞过的管道计数（击碎的不算）
+        if (pipesPassedForShield >= 5) {
+          bird.shield++;
+          pipesPassedForShield = 0;
+        }
+        sfxScore();
+      }
+    }
+    // 4. 移除已经移出屏幕左侧的管道
+    pipes = pipes.filter(p => p.x + PIPE_W > 0);
+
+    // 7. 金币系统：随机间隔刷新，向左移动，碰到小鸟则吃掉 +1 分
+    coinSpawnTimer++;
+    if (coinSpawnTimer > 55 + Math.random() * 75) {   // 55~130 帧随机间隔
+      spawnCoin();
+      coinSpawnTimer = 0;
+    }
+    for (const c of coins) {
+      c.x -= spd;
+      c.spin += 0.12;                 // 旋转动画
+      c.bob += 0.05;                  // 上下浮动
+      // 碰撞检测：小鸟圆 vs 金币圆
+      if (!c.eaten) {
+        const dx = bird.x - c.x;
+        const dy = bird.y - (c.y + Math.sin(c.bob) * 4);
+        if (dx * dx + dy * dy < (bird.r + c.r) * (bird.r + c.r)) {
+          c.eaten = true;
+          score++;                    // 吃到金币额外 +1 分
+          coinsEaten++;
+          spawnCoinSparkle(c.x, c.y);
+          sfxCoin();
+        }
+      }
+    }
+    coins = coins.filter(c => !c.eaten && c.x + c.r > 0);
+
+    // 8. 技能果实系统：随机间隔刷新，向左移动，碰到小鸟则触发效果
+    fruitSpawnTimer++;
+    if (fruitSpawnTimer > 90 + Math.random() * 120) {   // 90~210 帧随机间隔
+      spawnFruit();
+      fruitSpawnTimer = 0;
+    }
+    for (const f of fruits) {
+      f.x -= spd;
+      f.spin += 0.1;                  // 脉冲动画
+      f.bob += 0.05;                  // 上下浮动
+      if (!f.eaten) {
+        const dx = bird.x - f.x;
+        const dy = bird.y - (f.y + Math.sin(f.bob) * 4);
+        if (dx * dx + dy * dy < (bird.r + f.r) * (bird.r + f.r)) {
+          f.eaten = true;
+          applyFruitEffect(f.type, f.x, f.y);   // 触发对应果实效果
+        }
+      }
+    }
+    fruits = fruits.filter(f => !f.eaten && f.x + f.r > 0);
+
+    // 5. 碰撞检测
+    if (bird.invuln <= 0) {
+      // 飞到屏幕顶部：直接给 195 分并进入结算界面
+      if (bird.y - bird.r < 0) {
+        score = 195;            // 到达顶部 -> 直接结算 195 分
+        bird.y = bird.r;        // 让鸟停在顶部（结算界面可见）
+        bird.vy = 0;
+        gameOver();             // 弹出游戏结束 / 结算界面
+        return;
+      }
+      // 撞到地面：直接死亡，不再消耗护盾（地面=绝对死亡线）
+      else if (bird.y + bird.r > H - GROUND_H) {
+        gameOver();              // 接触地面立即结束，护盾在此无效
+        return;
+      }
+    }
+
+    // 6. 碰撞检测：撞管道（无敌帧内忽略）
+    let dead = false;
+    for (const p of pipes) {
+      const inX = bird.x + bird.r > p.x && bird.x - bird.r < p.x + PIPE_W;
+      if (inX) {
+        const hitTop    = bird.y - bird.r < p.gapY;          // 撞上管道
+        const hitBottom = bird.y + bird.r > p.gapY + p.gap;  // 撞下管道
+        // 命中且在无敌帧外 -> 结算伤害；命中一根就跳出，避免重复判定
+        if ((hitTop || hitBottom) && bird.invuln <= 0 && takeHit()) dead = true;
+        break;
+      }
+    }
+    if (dead) return;
+  } else if (state === 'ready') {
+    // 待机时小鸟轻轻上下浮动，提示「点我」
+    bird.y = H / 2 + Math.sin(Date.now() / 200) * 6;
+  }
+}
+
+function gameOver() {
+  state = 'over';
+  bird.hurt = true;
+  sfxDeath();
+  const before = best;
+  if (score > best) {
+    best = score;
+    newRecord = true;
+    localStorage.setItem((loggedIn && !isGuest) ? 'bossBirdBest_' + currentUser : 'bossBirdBest', best); // 最高分存本地，下次还在
+  }
+  recordScore(score);   // 记入该用户历史（最多保留最近 100 局）
+  // 本局是否跨过了某个皮肤的解锁线 -> 弹恭喜
+  const newly = SKINS.filter(s => s.unlock > before && s.unlock <= best);
+  if (newly.length) {
+    unlockMsg = '解锁新皮肤：' + newly.map(s => s.name).join('、');
+    unlockMsgTimer = 160;
+  }
+}
+
+/* ---------- 受伤结算：有护盾则消耗一层，否则死亡 ---------- */
+function takeHit() {
+  if (bird.shield > 0) {
+    bird.shield--;            // 消耗一层护盾
+    bird.invuln = 45;         // 短暂无敌，避免被同一根管子连续打死
+    bird.vy = FLAP * 0.7;     // 向上弹开一点，争取脱困空间
+    spawnShieldBreak();       // 护盾破碎特效
+    sfxShield();
+    return false;             // 没死
+  }
+  gameOver();
+  return true;                // 死了
+}
+
+/* ---------- 绘制 ---------- */
+function draw() {
+  // 天空渐变背景（随难度从白天渐变到夜晚）
+  const skyIdx = getDifficulty();
+  const sg = ctx.createLinearGradient(0, 0, 0, H);
+  sg.addColorStop(0, SKY_GRADIENTS[skyIdx][0]);
+  sg.addColorStop(1, SKY_GRADIENTS[skyIdx][1]);
+  ctx.fillStyle = sg;
+  ctx.fillRect(0, 0, W, H);
+
+  // 云朵（立体渐变 + 粒子尾迹）
+  for (const cl of clouds) drawCloud3D(cl);
+
+  // 管道
+  for (const p of pipes) drawPipe(p);
+
+  // 地面
+  ctx.fillStyle = '#ded895';
+  ctx.fillRect(0, H - GROUND_H, W, GROUND_H);
+  ctx.fillStyle = '#5ee270';
+  ctx.fillRect(0, H - GROUND_H, W, 14);
+
+  // 金币
+  for (const c of coins) drawCoin(c);
+
+  // 技能果实
+  for (const f of fruits) drawFruit(f);
+
+  // 粒子（画在鸟后面，受击/起飞特效）
+  for (const p of particles) {
+    ctx.globalAlpha = Math.max(0, p.life);
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // 小鸟
+  drawBird();
+
+  // 进行中：中央显示分数 + 难度等级
+  if (state === 'playing') {
+    drawText(score, W / 2, 90, 'bold 42px sans-serif', '#fff', 'center');
+    // 难度等级（分数下方小字，Lv.0 时不显示）
+    const d = getDifficulty();
+    if (d > 0) drawText('Lv.' + d, W / 2, 118, 'bold 14px sans-serif', 'rgba(255,255,255,0.7)', 'center');
+  }
+
+  // 护盾层数（左上角）
+  if (bird.shield > 0) drawShieldHUD(bird.shield);
+
+  // 护盾进度条（盾图标下方，显示距下次护盾还差几根管道）
+  if (state === 'playing' && pipesPassedForShield > 0) {
+    const bx = 12, by = 52, bw = 28, bh = 4;
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.fillRect(bx, by, bw, bh);
+    ctx.fillStyle = '#5ad1ff';
+    ctx.fillRect(bx, by, bw * (pipesPassedForShield / 5), bh);
+  }
+
+  // 待机界面
+  if (state === 'ready') {
+    drawText('Boss Bird', W / 2, 48, 'bold 40px sans-serif', '#fff', 'center');
+    const who = loggedIn ? (isGuest ? '游客' : currentUser) : '';
+    drawText('最高分  ' + best + (who ? '  ·  ' + who : ''), W / 2, 74, '15px sans-serif', '#ffe9a8', 'center');
+    if (loggedIn) { drawHistoryPanel(); drawLogoutBtn(); }   // 已登录：显示最近20局 + 退出
+    drawFruitGuide(loggedIn ? 376 : 195);
+    // 起飞提示（闪烁效果吸引注意）
+    if (Math.floor(Date.now() / 500) % 2) {
+      drawText('点击屏幕 / 空格 起飞', W / 2, H - 135, 'bold 17px sans-serif', '#fff', 'center');
+    }
+    drawSkinPicker();
+  }
+
+  // 结束界面
+  if (state === 'over') {
+    ctx.fillStyle = 'rgba(0,0,0,.55)';
+    ctx.fillRect(0, 0, W, H);
+    // 新纪录标记
+    if (newRecord) {
+      drawText('★ 新纪录 ★', W / 2, H / 2 - 145, 'bold 22px sans-serif', '#ffe08a', 'center');
+    }
+    // 解锁新皮肤恭喜提示
+    if (unlockMsgTimer > 0) {
+      unlockMsgTimer--;
+      drawText(unlockMsg, W / 2, H / 2 - 115, 'bold 16px sans-serif', '#ffe08a', 'center');
+    }
+    drawText('游戏结束', W / 2, H / 2 - 75, 'bold 34px sans-serif', '#fff', 'center');
+    drawText('本局得分  ' + score, W / 2, H / 2 - 30, 'bold 24px sans-serif', '#fff', 'center');
+    drawText('历史最高  ' + best, W / 2, H / 2, '16px sans-serif', '#ffe9a8', 'center');
+    // 统计面板
+    const py = H / 2 + 28;
+    drawText('金币 ' + coinsEaten + '  ·  碎管 ' + pipesCrushed + '  ·  果实 ' + fruitsEaten, W / 2, py, '14px sans-serif', '#ccc', 'center');
+    drawText('难度等级  ' + getDifficulty(), W / 2, py + 22, '13px sans-serif', '#aaa', 'center');
+    // 调侃文案
+    if (score < 5) {
+      drawText('保胎针打头上了？', W / 2, py + 52, 'bold 17px sans-serif', '#ff9aa2', 'center');
+    } else if (score < 42) {
+      drawText('你和彬总还有一段差距', W / 2, py + 52, 'bold 17px sans-serif', '#9ec5ff', 'center');
+    } else {
+      drawText('彬总附体！', W / 2, py + 52, 'bold 17px sans-serif', '#ffe08a', 'center');
+    }
+    // 重启提示（闪烁）
+    if (Math.floor(Date.now() / 500) % 2) {
+      drawText('点击重新开始', W / 2, py + 82, '16px sans-serif', '#fff', 'center');
+    }
+    drawSkinPicker();
+  }
+
+  // 静音图标（右上角，所有界面都显示）
+  drawMuteIcon();
+}
+
+/* ---------- 立体云朵：底部阴影 + 径向渐变主体 + 顶部高光 + 尾部粒子 ---------- */
+function drawCloud3D(cl) {
+  const x = cl.x, y = cl.y + Math.sin(cl.bobPhase || 0) * 3, s = cl.s;
+
+  // 1. 尾部粒子拖尾（画在云体后面，从左向后消散）
+  for (const tp of cl.trail) {
+    ctx.globalAlpha = tp.life * 0.45;
+    const tgrd = ctx.createRadialGradient(tp.x, tp.y, 0, tp.x, tp.y, tp.size);
+    tgrd.addColorStop(0, 'rgba(255,255,255,0.7)');
+    tgrd.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = tgrd;
+    ctx.beginPath();
+    ctx.arc(tp.x, tp.y, tp.size, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // 2. 底部阴影层（让云有"落在空中"的立体感）
+  ctx.fillStyle = 'rgba(180,195,210,0.35)';
+  ctx.beginPath();
+  ctx.arc(x, y + 7 * s, 20 * s, 0, Math.PI * 2);
+  ctx.arc(x + 22 * s, y + 11 * s, 15 * s, 0, Math.PI * 2);
+  ctx.arc(x - 22 * s, y + 11 * s, 15 * s, 0, Math.PI * 2);
+  ctx.arc(x + 8 * s, y + 14 * s, 12 * s, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 3. 主体：径向渐变（左上亮 → 右下暗，模拟光照）
+  const grd = ctx.createRadialGradient(x - 6 * s, y - 8 * s, 4, x + 4 * s, y + 4 * s, 28 * s);
+  grd.addColorStop(0, 'rgba(255,255,255,0.98)');
+  grd.addColorStop(0.5, 'rgba(248,250,252,0.85)');
+  grd.addColorStop(1, 'rgba(210,222,235,0.55)');
+  ctx.fillStyle = grd;
+  ctx.beginPath();
+  ctx.arc(x, y, 18 * s, 0, Math.PI * 2);
+  ctx.arc(x + 22 * s, y + 4 * s, 14 * s, 0, Math.PI * 2);
+  ctx.arc(x - 22 * s, y + 4 * s, 14 * s, 0, Math.PI * 2);
+  ctx.arc(x + 10 * s, y - 8 * s, 12 * s, 0, Math.PI * 2);
+  ctx.arc(x - 10 * s, y - 6 * s, 11 * s, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 4. 顶部高光（最亮的小圆，模拟阳光照射点）
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  ctx.beginPath();
+  ctx.arc(x - 6 * s, y - 9 * s, 7 * s, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+/* ---------- 金币：旋转椭圆 + 金色渐变 + 光泽 + 外圈发光 ---------- */
+function drawCoin(c) {
+  const cy = c.y + Math.sin(c.bob) * 4;
+  // spin 控制宽度缩放，模拟硬币翻转
+  const w = Math.abs(Math.cos(c.spin)) * c.r + 2;
+
+  // 外圈发光
+  ctx.shadowColor = '#ffd700';
+  ctx.shadowBlur = 12;
+
+  // 金色径向渐变主体
+  const grd = ctx.createLinearGradient(c.x - w, cy - c.r, c.x + w, cy + c.r);
+  grd.addColorStop(0, '#fff6c2');
+  grd.addColorStop(0.4, '#ffd700');
+  grd.addColorStop(1, '#daa520');
+  ctx.fillStyle = grd;
+  ctx.beginPath();
+  ctx.ellipse(c.x, cy, w, c.r, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.shadowBlur = 0;
+
+  // 边框
+  ctx.strokeStyle = '#b8860b';
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+
+  // 中心 ¥ 符号（宽度够大时才画，避免翻转到极窄时糊成一团）
+  if (w > c.r * 0.5) {
+    ctx.fillStyle = '#b8860b';
+    ctx.font = 'bold ' + Math.round(c.r * 1.1) + 'px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('¥', c.x, cy + 1);
+  }
+
+  // 高光弧（上方亮线，增加金属质感）
+  if (w > c.r * 0.4) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.ellipse(c.x - w * 0.2, cy - c.r * 0.3, w * 0.5, c.r * 0.4, -0.3, 0, Math.PI);
+    ctx.stroke();
+  }
+}
+
+/* ---------- 绘制技能果实：脉冲圆 + 径向渐变 + 发光 + 小叶子 + 符号 ---------- */
+function drawFruit(f) {
+  const cy = f.y + Math.sin(f.bob) * 4;
+  // 脉冲效果：半径随时间微小波动，区别于金币的翻转
+  const pulse = 1 + Math.sin(f.spin * 2) * 0.12;
+  const r = f.r * pulse;
+
+  // 按类型设定颜色
+  let c1, c2, c3, glow, symbol;
+  if (f.type === 1) {
+    // 红橙色：击碎管道
+    c1 = '#ff8c00'; c2 = '#ff4500'; c3 = '#cc3700';
+    glow = '#ff5500'; symbol = '\u788E';   // 碎
+  } else if (f.type === 2) {
+    // 蓝色：护盾
+    c1 = '#7ec8ff'; c2 = '#4ec0ff'; c3 = '#1a6ec4';
+    glow = '#4ec0ff'; symbol = '\u76FE';   // 盾
+  } else {
+    // 灰色：减分缩小
+    c1 = '#d0d0d0'; c2 = '#999999'; c3 = '#555555';
+    glow = '#888888'; symbol = '\u7F29';   // 缩
+  }
+
+  // 外圈发光
+  ctx.shadowColor = glow;
+  ctx.shadowBlur = 14;
+
+  // 主体：径向渐变（左上亮 -> 右下暗）
+  const grd = ctx.createRadialGradient(f.x - r * 0.3, cy - r * 0.3, 2, f.x, cy, r);
+  grd.addColorStop(0, c1);
+  grd.addColorStop(0.6, c2);
+  grd.addColorStop(1, c3);
+  ctx.fillStyle = grd;
+  ctx.beginPath();
+  ctx.arc(f.x, cy, r, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.shadowBlur = 0;
+
+  // 边框
+  ctx.strokeStyle = c3;
+  ctx.lineWidth = 1.3;
+  ctx.stroke();
+
+  // 小叶子（顶部，让它看起来像果实）
+  ctx.fillStyle = '#4caf50';
+  ctx.beginPath();
+  ctx.ellipse(f.x + 2, cy - r - 2, 4.5, 2.2, -0.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 中心符号
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold ' + Math.round(r * 0.75) + 'px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(symbol, f.x, cy + 1);
+
+  // 高光点（左上方，增加立体感）
+  ctx.fillStyle = 'rgba(255,255,255,0.4)';
+  ctx.beginPath();
+  ctx.ellipse(f.x - r * 0.35, cy - r * 0.35, r * 0.28, r * 0.18, -0.5, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawPipe(p) {
+  const topH = p.gapY;               // 上管道高度
+  const bottomY = p.gapY + p.gap;    // 下管道起点
+  ctx.fillStyle = '#5cb85c';
+  ctx.fillRect(p.x, 0, PIPE_W, topH);
+  ctx.fillRect(p.x, bottomY, PIPE_W, H - GROUND_H - bottomY);
+  // 管口加粗
+  ctx.fillStyle = '#4cae4c';
+  ctx.fillRect(p.x - 3, topH - 16, PIPE_W + 6, 16);
+  ctx.fillRect(p.x - 3, bottomY, PIPE_W + 6, 16);
+}
+
+function bodyFill() {
+  const s = SKINS[currentSkin];
+  if (s.body) return s.body;                 // 普通纯色皮肤
+  // 黄金神鸟：金色径向渐变
+  const grd = ctx.createRadialGradient(-3, -3, 2, 0, 0, bird.r + 4);
+  grd.addColorStop(0, '#fff6c2');
+  grd.addColorStop(0.5, '#ffd700');
+  grd.addColorStop(1, '#d4880a');
+  return grd;
+}
+
+// 皇冠（仅黄金神鸟）
+function drawCrown() {
+  ctx.fillStyle = '#ffd700';
+  ctx.strokeStyle = '#b8860b';
+  ctx.lineWidth = 1;
+  const y = -bird.r - 7;
+  ctx.beginPath();
+  ctx.moveTo(-9, y + 7);
+  ctx.lineTo(-9, y + 1);
+  ctx.lineTo(-4.5, y + 5);
+  ctx.lineTo(0, y);
+  ctx.lineTo(4.5, y + 5);
+  ctx.lineTo(9, y + 1);
+  ctx.lineTo(9, y + 7);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+}
+
+function drawBird() {
+  const s = SKINS[currentSkin];
+  ctx.save();
+  ctx.translate(bird.x, bird.y);
+  // 飞行时根据下落速度让小鸟微微低头/抬头
+  let angle = 0;
+  if (state === 'playing') angle = Math.max(-0.4, Math.min(1.2, bird.vy * 0.05));
+  ctx.rotate(angle);
+
+  // 无敌帧内闪烁，提示刚被护盾救了一命
+  if (bird.invuln > 0) ctx.globalAlpha = (Math.floor(Date.now() / 80) % 2) ? 0.35 : 1;
+
+  // 黄金神鸟：身体发光
+  if (s.glow) { ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 18; }
+
+  // 身体（按皮肤上色，黄金款为金色渐变）
+  ctx.fillStyle = bodyFill();
+  ctx.beginPath();
+  ctx.arc(0, 0, bird.r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;   // 关掉阴影，避免影响后续绘制
+
+  // 翅膀（按皮肤上色）
+  ctx.fillStyle = s.wing;
+  ctx.beginPath();
+  ctx.ellipse(-4, 2, 8, 5, 0.3, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 皇冠（仅黄金神鸟）
+  if (s.crown) drawCrown();
+
+  // 表情：受击时画 X 眼 + 张口，平时画圆眼 + 嘴（嘴色随皮肤）
+  if (bird.hurt) {
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 2;
+    // 左眼 X
+    ctx.beginPath();
+    ctx.moveTo(2, -7);  ctx.lineTo(8, -1);
+    ctx.moveTo(8, -7);  ctx.lineTo(2, -1);
+    // 右眼 X
+    ctx.moveTo(9, -7);  ctx.lineTo(15, -1);
+    ctx.moveTo(15, -7); ctx.lineTo(9, -1);
+    ctx.stroke();
+    // 受惊的张口（深色 O）
+    ctx.fillStyle = '#7a1f1f';
+    ctx.beginPath();
+    ctx.ellipse(bird.r - 2, 3, 4, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    // 正常：圆眼
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(6, -4, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#000';
+    ctx.beginPath();
+    ctx.arc(7.5, -4, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+    // 嘴（颜色随皮肤）
+    ctx.fillStyle = s.beak;
+    ctx.beginPath();
+    ctx.moveTo(bird.r - 2, -2);
+    ctx.lineTo(bird.r + 8, -2);
+    ctx.lineTo(bird.r - 2, 4);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+// 文本绘制小帮手
+function drawText(t, x, y, font, color, align) {
+  ctx.font = font;
+  ctx.fillStyle = color;
+  ctx.textAlign = align || 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(t, x, y);
+}
+
+// 左上角护盾显示：盾牌图标 + 层数
+function drawShieldHUD(count) {
+  const x = 26, y = 32;
+  ctx.fillStyle = '#5ad1ff';
+  ctx.beginPath();
+  ctx.moveTo(x, y - 15);
+  ctx.lineTo(x + 14, y - 9);
+  ctx.lineTo(x + 14, y + 4);
+  ctx.lineTo(x, y + 17);
+  ctx.lineTo(x - 14, y + 4);
+  ctx.lineTo(x - 14, y - 9);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  drawText('×' + count, x, y + 1, 'bold 15px sans-serif', '#063a55', 'center');
+}
+
+// 皮肤选择区：在待机/结束界面底部画一排角色，可点选
+function layoutSkins() {
+  skinHit = [];
+  const n = SKINS.length;
+  const r = 15;
+  const gap = 46;
+  const startX = W / 2 - (n - 1) * gap / 2;
+  const y = H - 78;
+  for (let i = 0; i < n; i++) skinHit.push({ x: startX + i * gap, y, r, id: i });
+}
+
+// 小锁图标（画在已锁皮肤圆上）
+function drawLock(cx, cy) {
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  ctx.arc(cx, cy - 2, 3.5, Math.PI, 0);   // 锁梁
+  ctx.stroke();
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(cx - 4, cy - 2, 8, 7);      // 锁体
+  ctx.fillStyle = 'rgba(0,0,0,.5)';
+  ctx.beginPath();
+  ctx.arc(cx, cy + 1, 1.3, 0, Math.PI * 2); // 钥匙孔
+  ctx.fill();
+}
+
+// 画出皮肤选择条
+function drawSkinPicker() {
+  layoutSkins();
+  drawText('选择角色皮肤', W / 2, H - 78 - 26, '13px sans-serif', '#fff', 'center');
+  for (const h of skinHit) {
+    const s = SKINS[h.id];
+    const unlocked = isUnlocked(s);
+    // 圆形底色 = 该皮肤颜色
+    ctx.beginPath();
+    ctx.arc(h.x, h.y, h.r, 0, Math.PI * 2);
+    ctx.fillStyle = s.body ? s.body : '#ffd700';
+    ctx.fill();
+    // 选中描白边加粗，否则半透明白边
+    ctx.lineWidth = (h.id === currentSkin) ? 3 : 1.5;
+    ctx.strokeStyle = (h.id === currentSkin) ? '#fff' : 'rgba(255,255,255,.6)';
+    ctx.stroke();
+    if (!unlocked) {
+      // 未解锁：压暗 + 锁 + 所需分数
+      ctx.fillStyle = 'rgba(0,0,0,.45)';
+      ctx.beginPath(); ctx.arc(h.x, h.y, h.r, 0, Math.PI * 2); ctx.fill();
+      drawLock(h.x, h.y);
+      drawText(s.unlock + '分', h.x, h.y + h.r + 8, 'bold 10px sans-serif', '#fff', 'center');
+    }
+  }
+}
+
+/* ---------- 果实图鉴（开始界面展示3种果实效果）---------- */
+function drawFruitGuide(sy) {
+  const cx = W / 2;
+  const startY = sy || 195;
+  const items = [
+    { c1: '#ff8c00', c2: '#ff4500', glow: '#ff5500', symbol: '\u788E', text: '\u51FB\u788E\u524D\u65B93\u7BA1\u9053  +3\u5206' },
+    { c1: '#7ec8ff', c2: '#4ec0ff', glow: '#4ec0ff', symbol: '\u76FE', text: '\u62A4\u76FE +2  \u9E1F\u53D8\u5927' },
+    { c1: '#d0d0d0', c2: '#999999', glow: '#888888', symbol: '\u7F29', text: '\u5206\u6570 -5  \u9E1F\u53D8\u5C0F' },
+  ];
+  drawText('\u9053\u5177\u56FE\u9274', cx, startY - 22, 'bold 15px sans-serif', '#fff', 'center');
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    const y = startY + i * 34;
+    const fx = cx - 95;
+    // 小果实圆
+    ctx.shadowColor = it.glow;
+    ctx.shadowBlur = 10;
+    const grd = ctx.createRadialGradient(fx - 3, y - 3, 1, fx, y, 12);
+    grd.addColorStop(0, it.c1);
+    grd.addColorStop(0.6, it.c2);
+    grd.addColorStop(1, it.c2);
+    ctx.fillStyle = grd;
+    ctx.beginPath();
+    ctx.arc(fx, y, 12, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    // 符号
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 10px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(it.symbol, fx, y + 1);
+    // 效果说明
+    drawText(it.text, cx + 10, y, '14px sans-serif', '#fff', 'left');
+  }
+}
+
+/* ---------- 静音图标（右上角，所有界面都显示，可点击切换）---------- */
+function drawMuteIcon() {
+  const x = W - 28, y = 28;
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.beginPath();
+  ctx.arc(x, y, 16, 0, Math.PI * 2);
+  ctx.fill();
+  // 喇叭主体
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.moveTo(x - 5, y - 3);
+  ctx.lineTo(x - 1, y - 3);
+  ctx.lineTo(x + 3, y - 7);
+  ctx.lineTo(x + 3, y + 7);
+  ctx.lineTo(x - 1, y + 3);
+  ctx.lineTo(x - 5, y + 3);
+  ctx.closePath();
+  ctx.fill();
+  if (muted) {
+    // 红色斜杠表示静音
+    ctx.strokeStyle = '#ff5555';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(x - 9, y - 9);
+    ctx.lineTo(x + 9, y + 9);
+    ctx.stroke();
+  } else {
+    // 声波弧线
+    ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(x + 5, y, 4, -0.6, 0.6);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(x + 5, y, 7, -0.5, 0.5);
+    ctx.stroke();
+  }
+}
+
+/* =========================================================
+   账号系统（登录 / 注册 / 历史成绩）
+   前端只负责界面与调用；账号、密码（服务端 PBKDF2 哈希）、20 局成绩
+   全部由 Python 后端管理。后端栈：Flask + JWT(Bearer) + PBKDF2 + SQLite。
+   ========================================================= */
+let loggedIn = false, currentUser = null, isGuest = false, token = null;
+
+const loginOverlay = document.getElementById('loginOverlay');
+const loginView    = document.getElementById('loginView');
+const registerView = document.getElementById('registerView');
+const liUser = document.getElementById('liUser');
+const liPass = document.getElementById('liPass');
+const liErr  = document.getElementById('liErr');
+const liLogin = document.getElementById('liLogin');
+const liToRegister = document.getElementById('liToRegister');
+const liGuest = document.getElementById('liGuest');
+const rgUser  = document.getElementById('rgUser');
+const rgPass  = document.getElementById('rgPass');
+const rgPass2 = document.getElementById('rgPass2');
+const rgErr   = document.getElementById('rgErr');
+const rgRegister = document.getElementById('rgRegister');
+const rgBack  = document.getElementById('rgBack');
+
+// 内存中的历史：[{s:分数, t:毫秒时间戳}]，最新在前（当前页，从后端拉取后填充）
+let history = [];
+
+// 分页状态：每页条数、当前页、总条数、总页数、翻页按钮命中框
+const HIST_PAGE_SIZE = 10;
+let histPage = 1;
+let histTotal = 0;
+let histTotalPages = 1;
+let histHit = [];
+
+// ── localStorage 历史记录兜底（PWA / 无后端环境） ──
+function _lsHistKey() { return 'bossBirdHist_' + (currentUser || '_guest'); }
+function _loadHistLS() {
+  try { const r = localStorage.getItem(_lsHistKey()); return r ? JSON.parse(r) : []; }
+  catch { return []; }
+}
+function _saveHistLS(arr) {
+  try { localStorage.setItem(_lsHistKey(), JSON.stringify(arr.slice(0, 100))); }
+  catch {}
+}
+
+// 从后端分页拉取当前用户历史，并刷新最高分
+// 后端不可用时自动降级到 localStorage（PWA 离线/纯前端模式）
+async function fetchHistory(page = 1) {
+  if (isGuest || !token) { history = []; histPage = 1; histTotal = 0; histTotalPages = 1; return; }
+  try {
+    const r = await fetch('/api/scores?page=' + page + '&page_size=' + HIST_PAGE_SIZE, { headers: { 'Authorization': 'Bearer ' + token } });
+    if (!r.ok) throw new Error('unauthorized');
+    const j = await r.json();
+    history = (j.history || []).map(h => ({ s: h.score, t: new Date(h.played_at).getTime() }));
+    histPage = j.page || 1;
+    histTotal = j.total || 0;
+    histTotalPages = j.total_pages || 1;
+    currentUser = j.username || currentUser;
+    best = j.best || 0;
+    _saveHistLS(history); // 后端成功时同步一份到 localStorage，供离线兜底
+  } catch (e) {
+    // ── 无后端 / PWA 离线：从 localStorage 兜底 ──
+    const all = _loadHistLS();
+    histTotal = all.length;
+    histTotalPages = Math.max(1, Math.ceil(all.length / HIST_PAGE_SIZE));
+    histPage = Math.min(page, histTotalPages);
+    const start = (histPage - 1) * HIST_PAGE_SIZE;
+    history = all.slice(start, start + HIST_PAGE_SIZE);
+    // 兜底模式下也要恢复 best（从 localStorage 或当前历史算）
+    if (!best) {
+      const savedBest = localStorage.getItem((loggedIn && !isGuest) ? 'bossBirdBest_' + currentUser : 'bossBirdBest');
+      best = savedBest ? Number(savedBest) : 0;
+    }
+  }
+}
+
+// 载入历史供渲染（drawHistoryPanel 用，返回 [{s, t}]）
+function loadHistory() {
+  return (loggedIn && !isGuest) ? history : [];
+}
+
+// 记录一局成绩：优先写入后端，后端不可用时降级到 localStorage
+async function recordScore(s) {
+  if (isGuest || !token) return;
+  let serverOk = false;
+  try {
+    const r = await fetch('/api/scores', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({ score: s })
+    });
+    serverOk = r.ok;
+  } catch (e) {}
+  if (!serverOk) {
+    // ── 无后端 / PWA 离线：写入 localStorage 兜底 ──
+    const all = _loadHistLS();
+    all.unshift({ s: s, t: Date.now() }); // 最新在前
+    _saveHistLS(all);
+  }
+  await fetchHistory(1);
+}
+// 登录成功后调用：保存 token，拉取历史，隐藏浮层
+async function loginAs(user, tok, guest) {
+  currentUser = user; isGuest = !!guest; loggedIn = true;
+  if (!isGuest) {
+    token = tok || token;
+    localStorage.setItem('bossBirdToken', token);
+    await fetchHistory();
+    currentSkin = Number(localStorage.getItem('bossBirdSkin_' + user) || 0);
+    if (!isUnlocked(SKINS[currentSkin])) currentSkin = 0;
+  } else {
+    best = 0; history = []; histPage = 1; histTotal = 0; histTotalPages = 1;
+    currentSkin = Number(localStorage.getItem('bossBirdSkin') || 0);
+  }
+  loginOverlay.style.display = 'none';
+  showLoginView();   // 复位到登录视图，避免下次进来停在注册页
+}
+// 退出登录：清空 token，回到登录浮层（停在登录视图）
+function logout() {
+  loggedIn = false; isGuest = false; currentUser = null; token = null;
+  localStorage.removeItem('bossBirdToken');
+  loginOverlay.style.display = 'flex';
+  showLoginView();
+}
+// 视图切换：登录页 / 注册页（分层，互不打断）
+function showLoginView() {
+  loginView.style.display = 'block';
+  registerView.style.display = 'none';
+  liErr.textContent = ''; rgErr.textContent = '';
+  liUser.value = ''; liPass.value = '';
+  rgUser.value = ''; rgPass.value = ''; rgPass2.value = '';
+}
+function showRegisterView() {
+  loginView.style.display = 'none';
+  registerView.style.display = 'block';
+  liErr.textContent = ''; rgErr.textContent = '';
+  liUser.value = ''; liPass.value = '';
+  rgUser.value = ''; rgPass.value = ''; rgPass2.value = '';
+}
+// 按钮事件
+liLogin.onclick = async () => {
+  const u = liUser.value.trim(), p = liPass.value;
+  if (!u || !p) { liErr.textContent = '请输入用户名和密码'; return; }
+  liLogin.disabled = true;
+  try {
+    const r = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: u, password: p })
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { liErr.textContent = j.error || '登录失败'; return; }
+    loginAs(u, j.token, false);
+  } catch (e) {
+    liErr.textContent = '网络错误，请确认后端已启动';
+  } finally {
+    liLogin.disabled = false;
+  }
+};
+liToRegister.onclick = () => showRegisterView();
+rgBack.onclick = () => showLoginView();
+rgRegister.onclick = async () => {
+  const u = rgUser.value.trim(), p = rgPass.value, p2 = rgPass2.value;
+  if (!u || !p) { rgErr.textContent = '请输入用户名和密码'; return; }
+  if (!/^[一-龥A-Za-z0-9_]{2,20}$/.test(u)) { rgErr.textContent = '用户名 2-20 位（字母/数字/中文）'; return; }
+  if (p.length < 6) { rgErr.textContent = '密码至少 6 位'; return; }
+  if (p !== p2) { rgErr.textContent = '两次输入的密码不一致'; return; }
+  rgRegister.disabled = true;
+  try {
+    const r = await fetch('/api/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: u, password: p })
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { rgErr.textContent = j.error || '注册失败'; return; }
+    // 注册成功：不自动进游戏，退回登录页，让用户再用刚注册的账号登录一次
+    showLoginView();
+    liUser.value = u;            // 预填用户名，方便直接登录
+    liErr.textContent = '注册成功，请登录';
+  } catch (e) {
+    rgErr.textContent = '网络错误，请确认后端已启动';
+  } finally {
+    rgRegister.disabled = false;
+  }
+};
+liGuest.onclick = () => { loginAs('游客', null, true); };
+// 回车：登录页回车=登录；注册页回车=注册
+[liUser, liPass].forEach((el) => el.addEventListener('keydown', (e) => { if (e.key === 'Enter') liLogin.click(); }));
+[rgUser, rgPass, rgPass2].forEach((el) => el.addEventListener('keydown', (e) => { if (e.key === 'Enter') rgRegister.click(); }));
+
+// 圆角矩形小帮手
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+// 最近 20 局成绩面板（ready 界面，双列显示）
+// 个位数补零（时分秒显示 05 而不是 5）
+function pad2(n) { return (n < 10 ? '0' : '') + n; }
+
+function drawHistoryPanel() {
+  const arr = loadHistory();   // 当前页的历史记录（每帧重新读，保证实时）
+  if (isGuest) {
+    drawText('游客模式 · 成绩不记录', W / 2, 150, '14px sans-serif', '#aaa', 'center');
+    return;
+  }
+  histHit = [];   // 每帧重算翻页按钮命中框
+  const top = 112;
+  drawText('历史成绩 · 共 ' + histTotal + ' 局', W / 2, top - 20, 'bold 15px sans-serif', '#ffe08a', 'center');
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  roundRect(14, top - 6, W - 28, 246, 10); ctx.fill();
+
+  // 每页 HIST_PAGE_SIZE 条，排成 2 列 × 5 行
+  const rowH = 22;
+  const rowsPerCol = 5;
+  for (let i = 0; i < HIST_PAGE_SIZE; i++) {
+    const col = i < rowsPerCol ? 0 : 1;
+    const idx = col === 0 ? i : i - rowsPerCol;
+    const x = col === 0 ? 26 : 190;
+    const y = top + idx * rowH + 12;
+    if (i < arr.length) {
+      const d = new Date(arr[i].t);
+      const ds = (d.getMonth() + 1) + '/' + d.getDate() + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
+      drawText('#' + (i + 1), x, y, '12px sans-serif', '#9ec5ff', 'left');
+      drawText(String(arr[i].s), x + 34, y, 'bold 13px sans-serif', '#fff', 'left');
+      drawText(ds, x + 62, y, '9px sans-serif', '#aaa', 'left');
+    } else {
+      drawText('#' + (i + 1) + ' -', x, y, '12px sans-serif', 'rgba(255,255,255,0.3)', 'left');
+    }
+  }
+
+  // 分页控制：上一页 / 页码 / 下一页
+  const py = top + rowsPerCol * rowH + 34;   // 5 行下方
+  const btnR = 15;
+  const canPrev = histPage > 1;
+  const canNext = histPage < histTotalPages;
+
+  // 上一页
+  const prevX = 60;
+  ctx.beginPath(); ctx.arc(prevX, py, btnR, 0, Math.PI * 2);
+  ctx.fillStyle = canPrev ? 'rgba(255,255,255,0.22)' : 'rgba(255,255,255,0.08)';
+  ctx.fill();
+  ctx.lineWidth = 1.5; ctx.strokeStyle = canPrev ? '#fff' : 'rgba(255,255,255,0.3)'; ctx.stroke();
+  drawText('◀', prevX, py + 1, '13px sans-serif', canPrev ? '#fff' : 'rgba(255,255,255,0.3)', 'center');
+  if (canPrev) histHit.push({ x: prevX, y: py, r: btnR, kind: 'prev' });
+
+  // 下一页
+  const nextX = W - 60;
+  ctx.beginPath(); ctx.arc(nextX, py, btnR, 0, Math.PI * 2);
+  ctx.fillStyle = canNext ? 'rgba(255,255,255,0.22)' : 'rgba(255,255,255,0.08)';
+  ctx.fill();
+  ctx.lineWidth = 1.5; ctx.strokeStyle = canNext ? '#fff' : 'rgba(255,255,255,0.3)'; ctx.stroke();
+  drawText('▶', nextX, py + 1, '13px sans-serif', canNext ? '#fff' : 'rgba(255,255,255,0.3)', 'center');
+  if (canNext) histHit.push({ x: nextX, y: py, r: btnR, kind: 'next' });
+
+  // 页码
+  drawText('第 ' + histPage + ' / ' + histTotalPages + ' 页', W / 2, py + 1, '13px sans-serif', '#ffe08a', 'center');
+}
+
+// 退出按钮（ready 界面左上角）
+let logoutHit = { x: 35, y: 22, r: 16 };
+function drawLogoutBtn() {
+  const w = 46, h = 22, x = 12, y = 11;
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  roundRect(x, y, w, h, 8); ctx.fill();
+  drawText('退出', x + w / 2, y + h / 2 + 1, '12px sans-serif', '#fff', 'center');
+  logoutHit = { x: x + w / 2, y: y + h / 2, r: 16 };
+}
+
+/* ---------- 主循环 ---------- */
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+/* ---------- 输入处理 ---------- */
+// 把屏幕坐标换算成画布内坐标（画布可能被 CSS 缩放）
+function canvasPos(e) {
+  const rect = canvas.getBoundingClientRect();
+  const t = (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]) || e;
+  return {
+    x: (t.clientX - rect.left) * (canvas.width / rect.width),
+    y: (t.clientY - rect.top) * (canvas.height / rect.height),
+  };
+}
+
+// 点击是否命中皮肤选择区：命中则切换皮肤并吞掉这次点击
+function handleSkinTap(px, py) {
+  for (const h of skinHit) {
+    const dx = px - h.x, dy = py - h.y;
+    if (dx * dx + dy * dy <= (h.r + 5) * (h.r + 5)) {
+      const s = SKINS[h.id];
+      if (isUnlocked(s)) {
+        currentSkin = h.id;                                   // 切换皮肤
+        // 持久化选择（登录用户按用户名隔离）
+        if (loggedIn && !isGuest) localStorage.setItem('bossBirdSkin_' + currentUser, currentSkin);
+        else localStorage.setItem('bossBirdSkin', currentSkin);
+      } else {
+        unlockMsg = '需 ' + s.unlock + ' 分解锁「' + s.name + '」';
+        unlockMsgTimer = 90;
+      }
+      return true;   // 命中皮肤区，不再触发拍翅膀
+    }
+  }
+  return false;
+}
+
+// 翻页：delta 为 -1（上一页）或 1（下一页）
+function goHistPage(delta) {
+  const np = histPage + delta;
+  if (np < 1 || np > histTotalPages) return;
+  fetchHistory(np);
+}
+
+function onInput(e) {
+  e.preventDefault(); // 防止手机上双击放大、空格滚动页面
+  const p = canvasPos(e);
+  // 点击右上角静音图标 -> 切换静音
+  const mdx = p.x - (W - 28), mdy = p.y - 28;
+  if (mdx * mdx + mdy * mdy <= 18 * 18) { muted = !muted; return; }
+  // 待机界面：点击左上角退出按钮 -> 退出登录
+  if (state === 'ready' && loggedIn && !isGuest) {
+    const ldx = p.x - logoutHit.x, ldy = p.y - logoutHit.y;
+    if (ldx * ldx + ldy * ldy <= logoutHit.r * logoutHit.r) { logout(); return; }
+    // 点击历史分页按钮 -> 翻页
+    for (const h of histHit) {
+      const dx = p.x - h.x, dy = p.y - h.y;
+      if (dx * dx + dy * dy <= h.r * h.r) { goHistPage(h.kind === 'prev' ? -1 : 1); return; }
+    }
+  }
+  // 待机/结束界面：先判断是否点到了皮肤选择区
+  if (state === 'ready' || state === 'over') {
+    if (handleSkinTap(p.x, p.y)) return;
+  }
+  flap();
+}
+canvas.addEventListener('mousedown', onInput);
+canvas.addEventListener('touchstart', onInput, { passive: false });
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'Space') { e.preventDefault(); flap(); }
+  if (e.code === 'KeyM') { muted = !muted; }
+});
+
+// PWA：注册 Service Worker（添加到主屏幕 / 离线缓存）
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
+
+// 自动登录：同设备下次打开若已持有有效 token，直接进入（无需再输密码）
+const savedToken = localStorage.getItem('bossBirdToken');
+if (savedToken) {
+  token = savedToken;
+  fetch('/api/scores', { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(r => r.ok ? r.json() : Promise.reject())
+    .then(j => { loginAs(j.username, token, false); })
+    .catch(() => { token = null; localStorage.removeItem('bossBirdToken'); showLoginView(); });
+}
+
+// 启动！
+loop();
+</script>
+</body>
+</html>

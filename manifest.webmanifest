@@ -1,0 +1,16 @@
+{
+  "name": "Boss Bird 飞行小鸟",
+  "short_name": "Boss Bird",
+  "description": "一款极简的 Flappy Bird 风格飞行小鸟游戏，含护盾与多角色皮肤解锁。",
+  "start_url": "BossBird.html",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#15162b",
+  "theme_color": "#15162b",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
