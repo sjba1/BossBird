@@ -4,6 +4,12 @@
 完全复用直播平台 live-py 的分层套路：Flask Blueprint + JWT(Bearer) + PBKDF2 + 数据库。
 """
 import os
+import sys
+
+# 保证 backend/ 始终在 sys.path 上：
+# 本地 `python app.py`（cwd=backend/）和 gunicorn `backend.app:app`（cwd=仓库根）都能正确解析
+# `from auth import ...` 这类同级导入。
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from flask import Flask, send_from_directory
 

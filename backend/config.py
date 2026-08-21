@@ -3,8 +3,11 @@ import os
 
 # 后端目录（backend/）
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-# SQLite 数据库文件：默认 backend/bird.db；部署时用环境变量 BIRD_DB_PATH 指向持久卷（如 /data/bird.db）
+# SQLite 数据库文件：默认 backend/bird.db；本地开发用。部署时若设了 DATABASE_URL 则改用 Postgres，此值忽略。
 DB_PATH = os.environ.get("BIRD_DB_PATH", os.path.join(BASE_DIR, "bird.db"))
+# Postgres 连接串：部署（Render）时由平台注入（关联 Postgres 实例后自动生成）。
+# 设了它就用 Postgres，否则回落到上面的 SQLite。
+DATABASE_URL = os.environ.get("DATABASE_URL")
 # 前端静态目录（Bird/ 根目录，含 BossBird.html、index.html、manifest、sw.js）
 FRONTEND_DIR = os.path.abspath(os.path.join(BASE_DIR, ".."))
 

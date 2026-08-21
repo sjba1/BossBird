@@ -1,36 +1,37 @@
-# BossBird 部署到 Railway 运行手册
+# BossBird 后端部署手册（Render + Postgres）
 
-把 Flask 后端 + PWA 整工程同源部署到 Railway（Python 云主机）。
-部署后后端 7×24 跑在云端，**不再依赖这台公司电脑开机**；成绩落在云端持久卷，换手机/电脑登录同一账号即可同步。
+> 原规划用 Railway，但其免费额度（1 个服务）已用满，故改用 **Render**（免费版 Web Service 不限数量，且自带免费 Postgres）。
+> 代码已同时兼容本地 SQLite 与部署 Postgres：不设 `DATABASE_URL` 走 SQLite，设了走 Postgres（由 Render 关联数据库后自动注入）。
 
-## 已完成的代码改造（无需你再改）
-- `backend/app.py`：`app` 提到模块级，端口读环境变量 `$PORT`（gunicorn 以 `backend.app:app` 加载）。
-- `backend/config.py`：`DB_PATH` 支持环境变量 `BIRD_DB_PATH`，默认仍是 `backend/bird.db`。
-- `backend/requirements.txt`：新增 `gunicorn`（生产 WSGI 服务器）。
-- `Procfile`：`web: gunicorn backend.app:app --bind 0.0.0.0:$PORT`。
-- **前端零改动**：Flask 同源托管 PWA，`/api/` 相对路径原样生效，无需 CORS。
+## 代码改动一览（相对纯本地版）
+- `backend/app.py`：模块级 `app` + 端口读 `$PORT` + 把 `backend/` 加入 `sys.path`（保证 gunicorn `backend.app:app` 能加载）。
+- `backend/config.py`：新增 `DATABASE_URL`（Postgres 连接串，部署时由 Render 注入）。
+- `backend/db.py`：双兼容数据层。Postgres 模式用 `psycopg2` + `DictCursor`，并把 SQL 里的 `?` 占位符自动翻译成 `%s`；`init_db` 按后端选 DDL（`SERIAL` vs `AUTOINCREMENT`）。
+- `backend/requirements.txt`：新增 `psycopg2-binary>=2.9`。
+- 新增 `Procfile`：`web: gunicorn backend.app:app --bind 0.0.0.0:$PORT`。
 
-## 部署步骤
-1. 注册 https://railway.app 账号（可用 GitHub 登录）。
-2. 推代码到 GitHub（本机已 `git init` 并提交）：
-   ```
-   git remote add origin <你的仓库地址>
-   git push -u origin main
-   ```
-   （不想用 GitHub，也可装 Railway CLI 后 `railway link` + `railway up` 直接拖文件夹部署。）
-3. Railway 控制台 → New Project → Deploy from GitHub repo，选 Bird 仓库。
-4. 加持久卷（关键，否则 SQLite 重启被清空）：
-   Project → Volumes → 新建 Volume，挂载路径填 `/data`。
-5. 设环境变量（Project → Variables）：
-   - `BIRD_SECRET` = 一串随机串，生成：`python -c "import secrets;print(secrets.token_urlsafe(32))"`
-   - `BIRD_DB_PATH` = `/data/bird.db`
-   - `PORT` 由平台自动注入，**不用设**。
-6. 部署完成后 Railway 分配一个 `*.up.railway.app` 域名（自带 HTTPS）。
-7. 打开该域名 → 注册/登录 → 玩一局，成绩写入云端 SQLite。
-8. 安装 PWA：浏览器"添加到主屏幕"，之后换设备登录同一账号，成绩都在。
+## 在 Render 上部署（一次性）
+1. render.com 注册/登录（用 GitHub 授权）→ **New +** → **Web Service** → 连 GitHub 选 `sjba1/BossBird`。
+2. 配置：
+   - Runtime：**Python 3**
+   - Build Command：留空（Render 自动读 requirements.txt 安装依赖）
+   - Start Command：`gunicorn backend.app:app --bind 0.0.0.0:$PORT`
+   - Plan：**Free**
+3. 创建 **Postgres** 实例：左侧 **New +** → **PostgreSQL** → 选 Free → Create。
+4. 回到 Web Service → **Environment** → 点 **Connect** 关联刚才的 Postgres 实例。关联后 Render 会自动注入 `DATABASE_URL` 环境变量（无需手填）。
+5. 另外手动加一个环境变量（安全）：`BIRD_SECRET` = 一串随机长字符串（≥32 字节，别用默认值）。
+6. 保存 → Render 自动构建部署。首次启动 `init_db()` 会自动建 `users`/`scores` 表。
 
-## 注意事项
-- 本地已有的 `sjb` 账号和历史分数在 `backend/bird.db`，**不会自动同步**到云端（云端是空库，首次访问自动建表）。需要迁移旧数据可后续单独处理。
-- 多设备同步的前提：各设备登录**同一账号**。token 存在浏览器 localStorage（每台设备各自登录一次即可）。
-- 不要在本地用内网穿透（ngrok/frp）把这台电脑暴露公网当服务器——电脑一关就挂、还暴露公司内网。
-- 升级/改代码后，推一次 GitHub（或 `railway up`）即触发重新部署，云端自动拉新版本。
+## 验证
+部署完拿到 `https://xxx.onrender.com`（自带 HTTPS）：
+- 打开 → 注册账号 → 玩一局 → 成绩写入 Postgres。
+- 换手机/电脑登录同一账号，成绩同步（数据在云端数据库，不因重启丢失）。
+- 本地可让 AI 用 curl 验 `/api/register`、`/api/scores`。
+
+## 本地开发
+不设任何环境变量直接 `python app.py`（在 `backend/` 目录下），使用 `backend/bird.db`（SQLite），与线上逻辑一致。
+
+## 注意
+- Render 免费 Web Service 15 分钟无访问会休眠，首次访问需几秒冷启动，属正常。
+- Postgres 免费版有存储/连接数上限，够小游戏用；如需更高配可在 Render 上升级。
+- 本地 `backend/bird.db` 的旧分数不会自动同步到云端（云端是独立 Postgres 库）。
