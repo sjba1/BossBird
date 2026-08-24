@@ -2,7 +2,7 @@
 等价于 live-py 的 Prisma users/scores 模型。
 
 - 本地：不设 DATABASE_URL，回落到 SQLite（backend/bird.db 或 BIRD_DB_PATH 指定的文件）。
-- 部署：设 DATABASE_URL=postgres://...（Render 关联 Postgres 实例后自动注入），走 psycopg2。
+- 部署：设 DATABASE_URL=postgres://...（Render 关联 Postgres 实例后自动注入），走 pg8000 纯 Python 驱动。
 
 对外暴露的接口（get_conn / init_db / now_iso）对调用方透明：
 scores.py、auth.py 里的 SQL 继续用 ? 占位符即可，本模块在 Postgres 模式下自动翻译成 %s。
@@ -10,6 +10,7 @@ scores.py、auth.py 里的 SQL 继续用 ? 占位符即可，本模块在 Postgr
 import os
 import sqlite3
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 from config import DB_PATH, DATABASE_URL
 
@@ -23,19 +24,93 @@ def now_iso():
 USE_PG = bool(DATABASE_URL) and DATABASE_URL.startswith(("postgres://", "postgresql://"))
 
 if USE_PG:
-    import psycopg2
-    from psycopg2.extras import DictCursor
+    import pg8000.dbapi
 
-    # psycopg2 旧版本只认 postgresql://，Render 给的是 postgres://，这里归一化一下
+    # pg8000 只认 postgresql://，Render 给的是 postgres://，这里归一化一下
     _PG_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 
+def _parse_pg_url(url):
+    """把 postgresql://... 解析成 pg8000.dbapi.connect 能吃的关键字参数。"""
+    parsed = urlparse(url)
+    return {
+        "host": parsed.hostname,
+        "port": parsed.port or 5432,
+        "database": parsed.path.lstrip("/") or None,
+        "user": parsed.username,
+        "password": parsed.password,
+        # Neon、Supabase 等托管 Postgres 强制 SSL，pg8000 用 ssl_context=True 开启默认 SSL 上下文
+        "ssl_context": True,
+    }
+
+
+class _Row:
+    """兼容 sqlite3.Row / psycopg2 DictRow 的行对象：支持 row['col'] 和 row[0]。"""
+
+    def __init__(self, values, columns):
+        self._values = tuple(values)
+        self._columns = tuple(columns)
+        self._col_index = {name: i for i, name in enumerate(columns)}
+
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return self._values[key]
+        return self._values[self._col_index[key]]
+
+    def __iter__(self):
+        return iter(self._values)
+
+    def __len__(self):
+        return len(self._values)
+
+    def keys(self):
+        return self._col_index.keys()
+
+    def __repr__(self):
+        return repr(dict(zip(self._columns, self._values)))
+
+
+class _Cursor:
+    """游标包装：把 pg8000 返回的元组行包装成 _Row，保持与 sqlite3.Row 一致的访问方式。"""
+
+    def __init__(self, cur):
+        self._cur = cur
+
+    def _wrap_row(self, row):
+        if row is None:
+            return None
+        columns = [desc[0] for desc in self._cur.description]
+        return _Row(row, columns)
+
+    def execute(self, sql, params=()):
+        self._cur.execute(sql, params)
+        return self
+
+    def fetchone(self):
+        return self._wrap_row(self._cur.fetchone())
+
+    def fetchall(self):
+        return [self._wrap_row(r) for r in self._cur.fetchall()]
+
+    def fetchmany(self, size=None):
+        return [self._wrap_row(r) for r in self._cur.fetchmany(size)]
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self._cur.close()
+
+    def __getattr__(self, name):
+        return getattr(self._cur, name)
+
+
 class _Conn:
-    """连接包装：让 sqlite3 / psycopg2 两种连接对调用方表现一致。
+    """连接包装：让 sqlite3 / pg8000 两种连接对调用方表现一致。
 
     - execute(sql, params) 返回 cursor（调用方照常用 .fetchone()/.fetchall()）。
-    - Postgres 模式下把 SQL 里的 ? 占位符翻译成 %s（psycopg2 只认 %s）。
-    - 用 DictCursor，使结果既能 row["col"] 也能 row[0]，兼容 sqlite3.Row 的写法。
+    - Postgres 模式下把 SQL 里的 ? 占位符翻译成 %s（pg8000 也只认 %s）。
+    - 结果行既能 row["col"] 也能 row[0]，兼容 sqlite3.Row 的写法。
     """
 
     def __init__(self, conn):
@@ -46,6 +121,8 @@ class _Conn:
             sql = sql.replace("?", "%s")
         cur = self._conn.cursor()
         cur.execute(sql, params)
+        if USE_PG:
+            return _Cursor(cur)
         return cur
 
     def commit(self):
@@ -57,7 +134,7 @@ class _Conn:
 
 def get_conn():
     if USE_PG:
-        conn = psycopg2.connect(_PG_URL, cursor_factory=DictCursor)
+        conn = pg8000.dbapi.connect(**_parse_pg_url(_PG_URL))
     else:
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
