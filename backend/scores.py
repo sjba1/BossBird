@@ -127,7 +127,7 @@ def buy_skin():
         return jsonify(error="skin_id 必须是整数"), 400
 
     # 价格表（须与前端 BossBird.html 的 SKINS.price 保持一致）
-    PRICES = {0: 100, 1: 200, 2: 300, 3: 500}
+    PRICES = {0: 30, 1: 90, 2: 150, 3: 200}
     if skin_id not in PRICES:
         return jsonify(error="无效皮肤"), 400
     price = PRICES[skin_id]
