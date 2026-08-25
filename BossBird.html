@@ -256,12 +256,12 @@ const clouds = [
   { x: 180, y: 90,  s: 0.6, trail: [] },
 ];
 
-// 角色皮肤：id:0 默认拥有（免费）；其余用金币兑换，price 为兑换所需金币
+// 角色皮肤：id:0 默认拥有（免费）；其余用金币兑换，price 为兑换所需金币；skill 为皮肤技能（空=无）
 const SKINS = [
-  { id:0, name:'小黄',     price:30,  body:'#ffd33d', wing:'#f7b500', beak:'#ff7a00', crown:false, glow:false },
-  { id:1, name:'小蓝',     price:90,  body:'#4ec0ff', wing:'#2b8fd6', beak:'#ff9a3d', crown:false, glow:false },
-  { id:2, name:'薄荷',     price:150, body:'#5ee2a8', wing:'#34b984', beak:'#ff6f91', crown:false, glow:false },
-  { id:3, name:'黄金神鸟', price:200, body:null,     wing:'#b8860b', beak:'#ff4500', crown:true,  glow:true  },
+  { id:0, name:'小黄',     price:30,  body:'#ffd33d', wing:'#f7b500', beak:'#ff7a00', crown:false, glow:false, skill:'' },
+  { id:1, name:'小蓝',     price:90,  body:'#4ec0ff', wing:'#2b8fd6', beak:'#ff9a3d', crown:false, glow:false, skill:'开局自带1层护盾' },
+  { id:2, name:'薄荷',     price:150, body:'#5ee2a8', wing:'#34b984', beak:'#ff6f91', crown:false, glow:false, skill:'' },
+  { id:3, name:'黄金神鸟', price:200, body:null,     wing:'#b8860b', beak:'#ff4500', crown:true,  glow:true,  skill:'' },
 ];
 let currentSkin = 0;                       // 当前装备皮肤（登录后从本地 + owned 判定）
 let walletCoins = 0;                       // 玩家总金币（来自后端）
@@ -270,6 +270,7 @@ let lastGain = 0;                           // 最近一局获得的金币（结
 let unlockMsg = '';        // 购买 / 余额提示文字
 let unlockMsgTimer = 0;    // 提示剩余帧数
 let skinHit = [];          // 皮肤选择区的点击命中框（每帧重算）
+let hoverPos = null;       // 鼠标当前画布坐标（hover 技能提示用）；离开画布为 null
 
 // 某皮肤是否已拥有（依据后端返回的 owned_skins）
 function isUnlocked(s) { return ownedSkins.has(s.id); }
@@ -1202,6 +1203,30 @@ function drawSkinPicker() {
       drawText('可装备', h.x, h.y + h.r + 8, 'bold 10px sans-serif', '#9effa0', 'center');
     }
   }
+  // 鼠标悬停：在皮肤圆上方弹出技能提示
+  if (hoverPos) {
+    for (const h of skinHit) {
+      const dx = hoverPos.x - h.x, dy = hoverPos.y - h.y;
+      if (dx * dx + dy * dy <= (h.r + 5) * (h.r + 5)) { drawSkillTip(h); break; }
+    }
+  }
+}
+
+// 悬停提示框：皮肤圆上方显示该皮肤技能（无技能则不显示）
+function drawSkillTip(h) {
+  const s = SKINS[h.id];
+  if (!s.skill) return;
+  const label = '技能：' + s.skill;
+  ctx.font = '11px sans-serif';
+  const w = ctx.measureText(label).width + 14;
+  const hh = 20;
+  const bx = Math.min(Math.max(h.x - w / 2, 2), W - w - 2);  // 防出界
+  const by = h.y - h.r - hh - 8;
+  ctx.fillStyle = 'rgba(0,0,0,.78)';
+  ctx.beginPath();
+  ctx.roundRect(bx, by, w, hh, 6);
+  ctx.fill();
+  drawText(label, bx + w / 2, by + hh / 2 + 4, '11px sans-serif', '#ffe08a', 'center');
 }
 
 /* ---------- 果实图鉴（开始界面展示3种果实效果）---------- */
@@ -1706,6 +1731,9 @@ function onInput(e) {
 }
 canvas.addEventListener('mousedown', onInput);
 canvas.addEventListener('touchstart', onInput, { passive: false });
+// hover 技能提示：记录鼠标位置，绘制皮肤条时检测悬停
+canvas.addEventListener('mousemove', (e) => { hoverPos = canvasPos(e); });
+canvas.addEventListener('mouseleave', () => { hoverPos = null; });
 window.addEventListener('keydown', (e) => {
   if (e.code === 'Space') { e.preventDefault(); flap(); }
   if (e.code === 'KeyM') { muted = !muted; }
