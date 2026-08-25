@@ -276,6 +276,7 @@ let state = 'ready';
 let score = 0;
 let best  = 0;   // 最高分：登录后按用户载入（见 loginAs）
 let frame = 0;
+let pipeSpawnTimer = 0;   // 管道生成间隔计时（按 dt 累计）
 
 // 小鸟对象：位置、速度、半径、是否受击
 const bird = {
@@ -337,6 +338,7 @@ function reset() {
   state = 'ready';
   score = 0;
   frame = 0;
+  pipeSpawnTimer = 0;
   bird.y = H / 2;
   bird.vy = 0;
   bird.hurt = false;
@@ -627,25 +629,28 @@ function applyFruitEffect(type, x, y) {
 }
 
 /* ---------- 每帧更新逻辑 ---------- */
-function update() {
+function update(dt) {
+  if (dt === undefined) dt = 1;   // 兜底：无参数时按 60fps 一帧
+  // 皮肤提示倒计时（按时间而非帧数，各刷新率下时长一致）
+  if (unlockMsgTimer > 0) unlockMsgTimer -= dt;
   // 背景音乐：游戏中播放，其他状态停止（静音时自动停）
   if (state === 'playing' && !muted) startBGM(); else stopBGM();
   // 粒子始终更新（任何状态下都继续飘散、淡出）
   for (const p of particles) {
-    p.x += p.vx;
-    p.y += p.vy;
-    p.vy += 0.05;     // 粒子也受一点重力
-    p.life -= 0.04;   // 逐渐淡出
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.vy += 0.05 * dt;     // 粒子也受一点重力
+    p.life -= 0.04 * dt;   // 逐渐淡出
   }
   particles = particles.filter(p => p.life > 0);
 
   // 云朵漂移 + 尾部粒子生成（任何状态下都更新，让背景有生命力）
   for (const cl of clouds) {
-    cl.x -= 0.3 * cl.s;                // 缓慢向左飘
+    cl.x -= 0.3 * cl.s * dt;           // 缓慢向左飘
     if (cl.x < -60) cl.x = W + 50;      // 飘出左边后从右边回来
-    cl.bobPhase = (cl.bobPhase || 0) + 0.02;
+    cl.bobPhase = (cl.bobPhase || 0) + 0.02 * dt;
     // 随机在尾部（左侧）生成一团模糊粒子，模拟云尾消散
-    if (Math.random() < 0.18) {
+    if (Math.random() < 0.18 * dt) {
       cl.trail.push({
         x: cl.x - 24 * cl.s + (Math.random() - 0.5) * 10,
         y: cl.y + (Math.random() - 0.5) * 16 * cl.s + Math.sin(cl.bobPhase) * 3,
@@ -657,28 +662,31 @@ function update() {
     }
     // 更新云尾粒子
     for (const tp of cl.trail) {
-      tp.x += tp.vx;
-      tp.y += tp.vy;
-      tp.life -= 0.012;
-      tp.size *= 0.99;
+      tp.x += tp.vx * dt;
+      tp.y += tp.vy * dt;
+      tp.life -= 0.012 * dt;
+      tp.size *= Math.pow(0.99, dt);
     }
     cl.trail = cl.trail.filter(tp => tp.life > 0);
   }
 
   if (state === 'playing') {
-    // 1. 小鸟受重力影响下落
-    bird.vy += GRAVITY;
-    bird.y  += bird.vy;
-    if (bird.invuln > 0) bird.invuln--;   // 无敌帧倒计时
+    // 1. 小鸟受重力影响下落（乘 dt：高刷屏不会下坠更快）
+    bird.vy += GRAVITY * dt;
+    bird.y  += bird.vy * dt;
+    if (bird.invuln > 0) bird.invuln -= dt;   // 无敌帧倒计时（按时间）
 
-    // 2. 定时生成管道
-    frame++;
-    if (frame % curSpawn() === 0) spawnPipe();
+    // 2. 定时生成管道（按时间累计，取代帧取模）
+    pipeSpawnTimer += dt;
+    if (pipeSpawnTimer >= curSpawn()) {
+      spawnPipe();
+      pipeSpawnTimer = 0;
+    }
 
     // 3. 管道向左移动，并给穿过的管道计分
     const spd = curSpeed();
     for (const p of pipes) {
-      p.x -= spd;
+      p.x -= spd * dt;
       if (!p.passed && p.x + PIPE_W < bird.x) {
         p.passed = true;
         score++;
@@ -694,15 +702,15 @@ function update() {
     pipes = pipes.filter(p => p.x + PIPE_W > 0);
 
     // 7. 金币系统：随机间隔刷新，向左移动，碰到小鸟则吃掉 +1 分
-    coinSpawnTimer++;
-    if (coinSpawnTimer > 55 + Math.random() * 75) {   // 55~130 帧随机间隔
+    coinSpawnTimer += dt;
+    if (coinSpawnTimer > 55 + Math.random() * 75) {   // 55~130 帧随机间隔（按时间）
       spawnCoin();
       coinSpawnTimer = 0;
     }
     for (const c of coins) {
-      c.x -= spd;
-      c.spin += 0.12;                 // 旋转动画
-      c.bob += 0.05;                  // 上下浮动
+      c.x -= spd * dt;
+      c.spin += 0.12 * dt;                // 旋转动画
+      c.bob += 0.05 * dt;                 // 上下浮动
       // 黄金神鸟皮肤技能：大范围磁吸金币（100px 内金币向小鸟靠拢，越近越快）
       if (currentSkin === 3 && !c.eaten) {
         const mx = bird.x - c.x;
@@ -710,8 +718,8 @@ function update() {
         const md = Math.sqrt(mx * mx + my * my);
         if (md < 100 && md > 0.5) {
           const pull = (1 - md / 100) * 6 + 1.5;
-          c.x += (mx / md) * pull;
-          c.y += (my / md) * pull;
+          c.x += (mx / md) * pull * dt;
+          c.y += (my / md) * pull * dt;
         }
       }
       // 碰撞检测：小鸟圆 vs 金币圆
@@ -730,15 +738,15 @@ function update() {
     coins = coins.filter(c => !c.eaten && c.x + c.r > 0);
 
     // 8. 技能果实系统：随机间隔刷新，向左移动，碰到小鸟则触发效果
-    fruitSpawnTimer++;
-    if (fruitSpawnTimer > 90 + Math.random() * 120) {   // 90~210 帧随机间隔
+    fruitSpawnTimer += dt;
+    if (fruitSpawnTimer > 90 + Math.random() * 120) {   // 90~210 帧随机间隔（按时间）
       spawnFruit();
       fruitSpawnTimer = 0;
     }
     for (const f of fruits) {
-      f.x -= spd;
-      f.spin += 0.1;                  // 脉冲动画
-      f.bob += 0.05;                  // 上下浮动
+      f.x -= spd * dt;
+      f.spin += 0.1 * dt;                 // 脉冲动画
+      f.bob += 0.05 * dt;                 // 上下浮动
       if (!f.eaten) {
         const dx = bird.x - f.x;
         const dy = bird.y - (f.y + Math.sin(f.bob) * 4);
@@ -895,9 +903,8 @@ function draw() {
     if (newRecord) {
       drawText('★ 新纪录 ★', W / 2, H / 2 - 145, 'bold 22px sans-serif', '#ffe08a', 'center');
     }
-    // 解锁新皮肤恭喜提示
+    // 解锁新皮肤恭喜提示（倒计时在 update 中按时间递减）
     if (unlockMsgTimer > 0) {
-      unlockMsgTimer--;
       drawText(unlockMsg, W / 2, H / 2 - 115, 'bold 16px sans-serif', '#ffe08a', 'center');
     }
     drawText('游戏结束', W / 2, H / 2 - 75, 'bold 34px sans-serif', '#fff', 'center');
@@ -1715,8 +1722,14 @@ function drawLogoutBtn() {
 }
 
 /* ---------- 主循环 ---------- */
-function loop() {
-  update();
+let lastT = 0;   // 上一帧时间戳（delta time 归一化：高刷屏手感与 60Hz 一致）
+function loop(now) {
+  if (!lastT) lastT = now;
+  let dt = (now - lastT) / (1000 / 60);   // 以 60fps 为基准的帧间隔系数
+  lastT = now;
+  if (dt > 3) dt = 3;                     // 切后台/卡顿后回来不跳变
+  if (dt < 0) dt = 0;
+  update(dt);
   draw();
   requestAnimationFrame(loop);
 }
