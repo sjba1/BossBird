@@ -719,7 +719,7 @@ function gameOver() {
     newRecord = true;
     localStorage.setItem((loggedIn && !isGuest) ? 'bossBirdBest_' + currentUser : 'bossBirdBest', best); // 最高分存本地，下次还在
   }
-  recordScore(score);   // 记入历史并结算金币（最多保留最近 100 局）
+  recordScore(score, coinsEaten);   // 记入历史并按本局吃到金币数结算总金币（最多保留最近 100 局）
 }
 
 /* ---------- 受伤结算：有护盾则消耗一层，否则死亡 ---------- */
@@ -1379,14 +1379,14 @@ function loadHistory() {
 }
 
 // 记录一局成绩：优先写入后端，后端不可用时降级到 localStorage
-async function recordScore(s) {
+async function recordScore(s, coinsEatenThisRun) {
   if (isGuest || !token) return;
   // ── 乐观更新：发请求前就让本局立刻出现在界面，彻底消除"慢半拍" ──
   const optimistic = { s: s, t: Date.now(), _opt: true };
   history.unshift(optimistic);
   if (s > best) best = s;
-  // 本局金币乐观累加（得分 // 3），结束界面即时可见
-  const gain = Math.floor(s / 3);
+  // 本局金币乐观累加（按实际吃到的金币道具数量），结束界面即时可见
+  const gain = coinsEatenThisRun || 0;
   walletCoins += gain;
   lastGain = gain;
   let serverOk = false;
@@ -1394,7 +1394,7 @@ async function recordScore(s) {
     const r = await fetch('/api/scores', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-      body: JSON.stringify({ score: s })
+      body: JSON.stringify({ score: s, coins: coinsEatenThisRun || 0 })
     });
     serverOk = r.ok;
     if (r.ok) {

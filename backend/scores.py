@@ -81,6 +81,10 @@ def post_score():
     score = data.get("score")
     if not isinstance(score, int) or isinstance(score, bool) or score < 0:
         return jsonify(error="score 必须是非负整数"), 400
+    # 本局金币：玩家游戏内实际吃到的金币道具数量（不再按得分折算）
+    coins = data.get("coins")
+    if not isinstance(coins, int) or isinstance(coins, bool) or coins < 0:
+        return jsonify(error="coins 必须是非负整数"), 400
 
     conn = get_conn()
     try:
@@ -95,8 +99,8 @@ def post_score():
             ")",
             (username, username, HISTORY_LIMIT),
         )
-        # 结算金币：每局得分 // 3 累加进玩家总金币
-        gain = score // 3
+        # 结算金币：按本局吃到的金币道具数量累加进玩家总金币
+        gain = coins
         conn.execute(
             "UPDATE users SET coins = coins + ? WHERE username=?", (gain, username)
         )
