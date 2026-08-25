@@ -1322,8 +1322,7 @@ function drawSkillTip(h) {
   const bx = Math.min(Math.max(h.x - w / 2, 2), W - w - 2);  // 防出界
   const by = h.y + h.r + 6;                                  // 圆下方
   ctx.fillStyle = 'rgba(0,0,0,.78)';
-  ctx.beginPath();
-  ctx.roundRect(bx, by, w, hh, 6);
+  roundRect(bx, by, w, hh, 6);   // 用兼容版手绘圆角（原生 ctx.roundRect 旧浏览器不支持会崩）
   ctx.fill();
   drawText(label, bx + w / 2, by + hh / 2 + 4, '11px sans-serif', '#ffe08a', 'center');
 }
