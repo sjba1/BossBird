@@ -1180,9 +1180,17 @@ function drawLock(cx, cy) {
 function drawSkinPicker() {
   layoutSkins();
   drawText('选择角色皮肤（点金币兑换）', W / 2, H - 78 - 26, '13px sans-serif', '#fff', 'center');
+  // 先找出鼠标悬停命中的皮肤（有则隐藏其底部小字，让位给技能提示框）
+  let hoveredHit = null;
+  if (hoverPos) {
+    for (const h of skinHit) {
+      if (hitSkin(h, hoverPos.x, hoverPos.y)) { hoveredHit = h; break; }
+    }
+  }
   for (const h of skinHit) {
     const s = SKINS[h.id];
     const owned = isUnlocked(s);
+    const hovering = (h === hoveredHit);
     // 圆形底色 = 该皮肤颜色
     ctx.beginPath();
     ctx.arc(h.x, h.y, h.r, 0, Math.PI * 2);
@@ -1197,22 +1205,31 @@ function drawSkinPicker() {
       ctx.fillStyle = 'rgba(0,0,0,.45)';
       ctx.beginPath(); ctx.arc(h.x, h.y, h.r, 0, Math.PI * 2); ctx.fill();
       drawLock(h.x, h.y);
-      drawText('金币' + s.price, h.x, h.y + h.r + 8, 'bold 10px sans-serif', '#ffe08a', 'center');
-    } else if (h.id !== currentSkin) {
+      if (!hovering) drawText('金币' + s.price, h.x, h.y + h.r + 8, 'bold 10px sans-serif', '#ffe08a', 'center');
+    } else if (h.id !== currentSkin && !hovering) {
       // 已拥有但未装备：提示可点击装备
       drawText('可装备', h.x, h.y + h.r + 8, 'bold 10px sans-serif', '#9effa0', 'center');
     }
   }
-  // 鼠标悬停：在皮肤圆上方弹出技能提示
-  if (hoverPos) {
-    for (const h of skinHit) {
-      const dx = hoverPos.x - h.x, dy = hoverPos.y - h.y;
-      if (dx * dx + dy * dy <= (h.r + 5) * (h.r + 5)) { drawSkillTip(h); break; }
-    }
-  }
+  // 鼠标悬停：在皮肤圆下方弹出技能提示
+  if (hoveredHit) drawSkillTip(hoveredHit);
 }
 
-// 悬停提示框：皮肤圆上方显示该皮肤技能（无技能则不显示）
+// 命中判定：皮肤圆内 ∪ 其下方技能提示框内（避免鼠标移到提示框上时提示闪烁）
+function hitSkin(h, px, py) {
+  const dx = px - h.x, dy = py - h.y;
+  if (dx * dx + dy * dy <= (h.r + 5) * (h.r + 5)) return true;
+  const s = SKINS[h.id];
+  if (!s.skill) return false;
+  ctx.font = '11px sans-serif';
+  const w = ctx.measureText('技能：' + s.skill).width + 14;
+  const hh = 20;
+  const bx = Math.min(Math.max(h.x - w / 2, 2), W - w - 2);
+  const by = h.y + h.r + 6;
+  return px >= bx && px <= bx + w && py >= by && py <= by + hh;
+}
+
+// 悬停提示框：皮肤圆下方显示该皮肤技能（无技能则不显示）
 function drawSkillTip(h) {
   const s = SKINS[h.id];
   if (!s.skill) return;
@@ -1221,7 +1238,7 @@ function drawSkillTip(h) {
   const w = ctx.measureText(label).width + 14;
   const hh = 20;
   const bx = Math.min(Math.max(h.x - w / 2, 2), W - w - 2);  // 防出界
-  const by = h.y - h.r - hh - 8;
+  const by = h.y + h.r + 6;                                  // 圆下方
   ctx.fillStyle = 'rgba(0,0,0,.78)';
   ctx.beginPath();
   ctx.roundRect(bx, by, w, hh, 6);
