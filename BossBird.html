@@ -256,21 +256,23 @@ const clouds = [
   { x: 180, y: 90,  s: 0.6, trail: [] },
 ];
 
-// 角色皮肤：默认款一直可用，其余按「历史最高分」解锁（多角色解锁不同皮肤）
+// 角色皮肤：id:0 默认拥有（免费）；其余用金币兑换，price 为兑换所需金币
 const SKINS = [
-  { id:0, name:'小黄',     unlock:0,  body:'#ffd33d', wing:'#f7b500', beak:'#ff7a00', crown:false, glow:false },
-  { id:1, name:'小蓝',     unlock:10, body:'#4ec0ff', wing:'#2b8fd6', beak:'#ff9a3d', crown:false, glow:false },
-  { id:2, name:'薄荷',     unlock:15, body:'#5ee2a8', wing:'#34b984', beak:'#ff6f91', crown:false, glow:false },
-  { id:3, name:'黄金神鸟', unlock:20, body:null,     wing:'#b8860b', beak:'#ff4500', crown:true,  glow:true  },
+  { id:0, name:'小黄',     price:100, body:'#ffd33d', wing:'#f7b500', beak:'#ff7a00', crown:false, glow:false },
+  { id:1, name:'小蓝',     price:200, body:'#4ec0ff', wing:'#2b8fd6', beak:'#ff9a3d', crown:false, glow:false },
+  { id:2, name:'薄荷',     price:300, body:'#5ee2a8', wing:'#34b984', beak:'#ff6f91', crown:false, glow:false },
+  { id:3, name:'黄金神鸟', price:500, body:null,     wing:'#b8860b', beak:'#ff4500', crown:true,  glow:true  },
 ];
-let currentSkin = Number(localStorage.getItem('bossBirdSkin') || 0);
-if (!isUnlocked(SKINS[currentSkin])) currentSkin = 0;  // 防止选了已锁皮肤
-let unlockMsg = '';        // 解锁提示文字
+let currentSkin = 0;                       // 当前装备皮肤（登录后从本地 + owned 判定）
+let walletCoins = 0;                       // 玩家总金币（来自后端）
+let ownedSkins = new Set([0]);             // 已拥有皮肤 id（默认含 0），登录后从后端载入
+let lastGain = 0;                           // 最近一局获得的金币（结束界面展示用）
+let unlockMsg = '';        // 购买 / 余额提示文字
 let unlockMsgTimer = 0;    // 提示剩余帧数
 let skinHit = [];          // 皮肤选择区的点击命中框（每帧重算）
 
-// 某皮肤是否已解锁（依据历史最高分）
-function isUnlocked(s) { return best >= s.unlock; }
+// 某皮肤是否已拥有（依据后端返回的 owned_skins）
+function isUnlocked(s) { return ownedSkins.has(s.id); }
 
 /* ---------- 初始化 / 重置 ---------- */
 function reset() {
@@ -712,19 +714,12 @@ function gameOver() {
   state = 'over';
   bird.hurt = true;
   sfxDeath();
-  const before = best;
   if (score > best) {
     best = score;
     newRecord = true;
     localStorage.setItem((loggedIn && !isGuest) ? 'bossBirdBest_' + currentUser : 'bossBirdBest', best); // 最高分存本地，下次还在
   }
-  recordScore(score);   // 记入该用户历史（最多保留最近 100 局）
-  // 本局是否跨过了某个皮肤的解锁线 -> 弹恭喜
-  const newly = SKINS.filter(s => s.unlock > before && s.unlock <= best);
-  if (newly.length) {
-    unlockMsg = '解锁新皮肤：' + newly.map(s => s.name).join('、');
-    unlockMsgTimer = 160;
-  }
+  recordScore(score);   // 记入历史并结算金币（最多保留最近 100 局）
 }
 
 /* ---------- 受伤结算：有护盾则消耗一层，否则死亡 ---------- */
@@ -806,7 +801,7 @@ function draw() {
   if (state === 'ready') {
     drawText('Boss Bird', W / 2, 48, 'bold 40px sans-serif', '#fff', 'center');
     const who = loggedIn ? (isGuest ? '游客' : currentUser) : '';
-    drawText('最高分  ' + best + (who ? '  ·  ' + who : ''), W / 2, 74, '15px sans-serif', '#ffe9a8', 'center');
+    drawText('最高分  ' + best + (who ? '  ·  ' + who : '') + '  ·  金币 ' + walletCoins, W / 2, 74, '15px sans-serif', '#ffe9a8', 'center');
     if (loggedIn) { drawHistoryPanel(); drawLogoutBtn(); }   // 已登录：显示最近20局 + 退出
     drawFruitGuide(loggedIn ? 376 : 195);
     // 起飞提示（闪烁效果吸引注意）
@@ -836,17 +831,18 @@ function draw() {
     const py = H / 2 + 28;
     drawText('金币 ' + coinsEaten + '  ·  碎管 ' + pipesCrushed + '  ·  果实 ' + fruitsEaten, W / 2, py, '14px sans-serif', '#ccc', 'center');
     drawText('难度等级  ' + getDifficulty(), W / 2, py + 22, '13px sans-serif', '#aaa', 'center');
+    drawText('本局金币 +' + lastGain + '  ·  总金币 ' + walletCoins, W / 2, py + 46, 'bold 15px sans-serif', '#ffe08a', 'center');
     // 调侃文案
     if (score < 5) {
-      drawText('保胎针打头上了？', W / 2, py + 52, 'bold 17px sans-serif', '#ff9aa2', 'center');
+      drawText('保胎针打头上了？', W / 2, py + 72, 'bold 17px sans-serif', '#ff9aa2', 'center');
     } else if (score < 42) {
-      drawText('你和彬总还有一段差距', W / 2, py + 52, 'bold 17px sans-serif', '#9ec5ff', 'center');
+      drawText('你和彬总还有一段差距', W / 2, py + 72, 'bold 17px sans-serif', '#9ec5ff', 'center');
     } else {
-      drawText('彬总附体！', W / 2, py + 52, 'bold 17px sans-serif', '#ffe08a', 'center');
+      drawText('彬总附体！', W / 2, py + 72, 'bold 17px sans-serif', '#ffe08a', 'center');
     }
     // 重启提示（闪烁）
     if (Math.floor(Date.now() / 500) % 2) {
-      drawText('点击重新开始', W / 2, py + 82, '16px sans-serif', '#fff', 'center');
+      drawText('点击重新开始', W / 2, py + 100, '16px sans-serif', '#fff', 'center');
     }
     drawSkinPicker();
   }
@@ -1182,10 +1178,10 @@ function drawLock(cx, cy) {
 // 画出皮肤选择条
 function drawSkinPicker() {
   layoutSkins();
-  drawText('选择角色皮肤', W / 2, H - 78 - 26, '13px sans-serif', '#fff', 'center');
+  drawText('选择角色皮肤（点金币兑换）', W / 2, H - 78 - 26, '13px sans-serif', '#fff', 'center');
   for (const h of skinHit) {
     const s = SKINS[h.id];
-    const unlocked = isUnlocked(s);
+    const owned = isUnlocked(s);
     // 圆形底色 = 该皮肤颜色
     ctx.beginPath();
     ctx.arc(h.x, h.y, h.r, 0, Math.PI * 2);
@@ -1195,12 +1191,15 @@ function drawSkinPicker() {
     ctx.lineWidth = (h.id === currentSkin) ? 3 : 1.5;
     ctx.strokeStyle = (h.id === currentSkin) ? '#fff' : 'rgba(255,255,255,.6)';
     ctx.stroke();
-    if (!unlocked) {
-      // 未解锁：压暗 + 锁 + 所需分数
+    if (!owned) {
+      // 未拥有：压暗 + 锁 + 兑换价格
       ctx.fillStyle = 'rgba(0,0,0,.45)';
       ctx.beginPath(); ctx.arc(h.x, h.y, h.r, 0, Math.PI * 2); ctx.fill();
       drawLock(h.x, h.y);
-      drawText(s.unlock + '分', h.x, h.y + h.r + 8, 'bold 10px sans-serif', '#fff', 'center');
+      drawText('金币' + s.price, h.x, h.y + h.r + 8, 'bold 10px sans-serif', '#ffe08a', 'center');
+    } else if (h.id !== currentSkin) {
+      // 已拥有但未装备：提示可点击装备
+      drawText('可装备', h.x, h.y + h.r + 8, 'bold 10px sans-serif', '#9effa0', 'center');
     }
   }
 }
@@ -1351,6 +1350,8 @@ async function fetchHistory(page = 1, force = false) {
     histTotalPages = j.total_pages || 1;
     currentUser = j.username || currentUser;
     best = j.best || 0;
+    walletCoins = (j.coins != null) ? j.coins : walletCoins;          // 从后端载入总金币
+    ownedSkins = new Set(((j.owned_skins || '0').split(',')).map(Number));  // 载入已拥有皮肤
     _saveHistLS(history); // 后端成功时同步一份到 localStorage，供离线兜底
     // 缓存本页完整快照（数组拷贝，避免与 history 共享引用被后续乐观更新污染），翻回时整体恢复
     pageCache[page] = { history: history.slice(), total: histTotal, totalPages: histTotalPages, username: currentUser, best, page: histPage };
@@ -1384,6 +1385,10 @@ async function recordScore(s) {
   const optimistic = { s: s, t: Date.now(), _opt: true };
   history.unshift(optimistic);
   if (s > best) best = s;
+  // 本局金币乐观累加（得分 // 3），结束界面即时可见
+  const gain = Math.floor(s / 3);
+  walletCoins += gain;
+  lastGain = gain;
   let serverOk = false;
   try {
     const r = await fetch('/api/scores', {
@@ -1392,10 +1397,17 @@ async function recordScore(s) {
       body: JSON.stringify({ score: s })
     });
     serverOk = r.ok;
+    if (r.ok) {
+      const j = await r.json();
+      // 服务端权威校正（处理并发 / 取整边界）
+      walletCoins = j.coins;
+      lastGain = j.gain;
+    }
   } catch (e) {}
   if (!serverOk) {
-    // POST 失败：回滚乐观项，回落到 localStorage 兜底（离线/后端不可达场景）
+    // POST 失败：回滚乐观项与金币，回落到 localStorage 兜底（离线/后端不可达场景）
     history = history.filter(it => it !== optimistic);
+    walletCoins -= gain;
     const all = _loadHistLS();
     all.unshift({ s: s, t: Date.now() }); // 最新在前
     _saveHistLS(all);
@@ -1413,10 +1425,11 @@ async function loginAs(user, tok, guest) {
     pageCache = {};        // 登录/切换用户：清空上一用户的页缓存
     await fetchHistory(1, true);
     currentSkin = Number(localStorage.getItem('bossBirdSkin_' + user) || 0);
-    if (!isUnlocked(SKINS[currentSkin])) currentSkin = 0;
+    if (!ownedSkins.has(currentSkin)) currentSkin = 0;  // 装备的皮肤必须已拥有
   } else {
     best = 0; history = []; histPage = 1; histTotal = 0; histTotalPages = 1;
     currentSkin = Number(localStorage.getItem('bossBirdSkin') || 0);
+    if (!ownedSkins.has(currentSkin)) currentSkin = 0;
   }
   loginOverlay.style.display = 'none';
   showLoginView();   // 复位到登录视图，避免下次进来停在注册页
@@ -1609,18 +1622,54 @@ function handleSkinTap(px, py) {
     if (dx * dx + dy * dy <= (h.r + 5) * (h.r + 5)) {
       const s = SKINS[h.id];
       if (isUnlocked(s)) {
-        currentSkin = h.id;                                   // 切换皮肤
-        // 持久化选择（登录用户按用户名隔离）
-        if (loggedIn && !isGuest) localStorage.setItem('bossBirdSkin_' + currentUser, currentSkin);
-        else localStorage.setItem('bossBirdSkin', currentSkin);
+        currentSkin = h.id;          // 已拥有：直接装备
+        persistSkin();
       } else {
-        unlockMsg = '需 ' + s.unlock + ' 分解锁「' + s.name + '」';
-        unlockMsgTimer = 90;
+        buySkin(h.id);               // 未拥有：触发金币兑换
       }
       return true;   // 命中皮肤区，不再触发拍翅膀
     }
   }
   return false;
+}
+
+// 持久化当前皮肤选择（登录用户按用户名隔离）
+function persistSkin() {
+  if (loggedIn && !isGuest) localStorage.setItem('bossBirdSkin_' + currentUser, currentSkin);
+  else localStorage.setItem('bossBirdSkin', currentSkin);
+}
+
+// 用金币兑换皮肤：乐观扣币 + 请求后端，失败回滚
+async function buySkin(id) {
+  const s = SKINS[id];
+  if (ownedSkins.has(id)) { currentSkin = id; persistSkin(); return; }
+  if (walletCoins < s.price) {
+    unlockMsg = '金币不足，还差 ' + (s.price - walletCoins) + ' 金币';
+    unlockMsgTimer = 120;
+    return;
+  }
+  // 乐观更新：先扣币、标记拥有并装备
+  walletCoins -= s.price;
+  ownedSkins.add(id);
+  currentSkin = id;
+  persistSkin();
+  try {
+    const r = await fetch('/api/buy-skin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({ skin_id: id })
+    });
+    if (!r.ok) throw new Error('buy failed');
+    const j = await r.json();
+    walletCoins = j.coins;                       // 服务端权威校正
+    ownedSkins = new Set(j.owned_skins.split(',').map(Number));
+  } catch (e) {
+    // 回滚
+    walletCoins += s.price;
+    ownedSkins.delete(id);
+    unlockMsg = '购买失败，请重试';
+    unlockMsgTimer = 120;
+  }
 }
 
 // 翻页：delta 为 -1（上一页）或 1（下一页）

@@ -166,17 +166,24 @@ def get_conn():
 
 
 def init_db():
-    """建表：users（账号）、scores（每局成绩）。幂等。"""
+    """建表：users（账号 + 金币/皮肤）、scores（每局成绩）。幂等。
+
+    皮肤经济相关字段：
+      coins        INTEGER  玩家总金币（每局得分 // 3 累加）
+      owned_skins  TEXT     已拥有皮肤 id 列表，逗号分隔，默认 '0'（默认皮肤）
+    """
     conn = get_conn()
     try:
         if USE_PG:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS users (
-                    id         SERIAL PRIMARY KEY,
-                    username   VARCHAR(64) UNIQUE NOT NULL,
-                    pw_hash    TEXT NOT NULL,
-                    created_at TEXT NOT NULL
+                    id          SERIAL PRIMARY KEY,
+                    username    VARCHAR(64) UNIQUE NOT NULL,
+                    pw_hash     TEXT NOT NULL,
+                    created_at  TEXT NOT NULL,
+                    coins       INTEGER NOT NULL DEFAULT 0,
+                    owned_skins TEXT NOT NULL DEFAULT '0'
                 )
                 """
             )
@@ -190,14 +197,23 @@ def init_db():
                 )
                 """
             )
+            # 对早期已存在的旧库补列（幂等）
+            conn.execute(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS coins INTEGER NOT NULL DEFAULT 0"
+            )
+            conn.execute(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS owned_skins TEXT NOT NULL DEFAULT '0'"
+            )
         else:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS users (
-                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                    username   TEXT UNIQUE NOT NULL,
-                    pw_hash    TEXT NOT NULL,
-                    created_at TEXT NOT NULL
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username    TEXT UNIQUE NOT NULL,
+                    pw_hash     TEXT NOT NULL,
+                    created_at  TEXT NOT NULL,
+                    coins       INTEGER NOT NULL DEFAULT 0,
+                    owned_skins TEXT NOT NULL DEFAULT '0'
                 )
                 """
             )
@@ -211,6 +227,12 @@ def init_db():
                 )
                 """
             )
+            # SQLite 不支持 ADD COLUMN IF NOT EXISTS，先 PRAGMA 检查再补列
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
+            if "coins" not in cols:
+                conn.execute("ALTER TABLE users ADD COLUMN coins INTEGER NOT NULL DEFAULT 0")
+            if "owned_skins" not in cols:
+                conn.execute("ALTER TABLE users ADD COLUMN owned_skins TEXT NOT NULL DEFAULT '0'")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_scores_user ON scores(username)"
         )

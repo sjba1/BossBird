@@ -42,8 +42,9 @@ def register():
             return jsonify(error="该用户名已被注册"), 409
         pw_hash = generate_password_hash(password)  # 默认 pbkdf2:sha256
         conn.execute(
-            "INSERT INTO users (username, pw_hash, created_at) VALUES (?,?,?)",
-            (username, pw_hash, now_iso()),
+            "INSERT INTO users (username, pw_hash, created_at, coins, owned_skins) "
+            "VALUES (?,?,?,?,?)",
+            (username, pw_hash, now_iso(), 0, "0"),
         )
         conn.commit()
     finally:
@@ -66,7 +67,7 @@ def login():
     conn = get_conn()
     try:
         row = conn.execute(
-            "SELECT pw_hash FROM users WHERE username=?", (username,)
+            "SELECT pw_hash, coins, owned_skins FROM users WHERE username=?", (username,)
         ).fetchone()
     finally:
         conn.close()
@@ -75,4 +76,9 @@ def login():
         return jsonify(error="用户名或密码错误"), 401
 
     token = encode_token(username)
-    return jsonify(token=token, username=username), 200
+    return jsonify(
+        token=token,
+        username=username,
+        coins=row["coins"],
+        owned_skins=row["owned_skins"],
+    ), 200
