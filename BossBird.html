@@ -260,8 +260,8 @@ const clouds = [
 const SKINS = [
   { id:0, name:'小黄',     price:30,  body:'#ffd33d', wing:'#f7b500', beak:'#ff7a00', crown:false, glow:false, skill:'' },
   { id:1, name:'小蓝',     price:90,  body:'#4ec0ff', wing:'#2b8fd6', beak:'#ff9a3d', crown:false, glow:false, skill:'开局自带1层护盾' },
-  { id:2, name:'薄荷',     price:150, body:'#5ee2a8', wing:'#34b984', beak:'#ff6f91', crown:false, glow:false, skill:'天生体积小，吸收金币范围大' },
-  { id:3, name:'黄金神鸟', price:200, body:null,     wing:'#b8860b', beak:'#ff4500', crown:true,  glow:true,  skill:'' },
+  { id:2, name:'薄荷',     price:150, body:'#5ee2a8', wing:'#34b984', beak:'#ff6f91', crown:false, glow:false, skill:'天生体积小，护盾增幅小' },
+  { id:3, name:'黄金神鸟', price:200, body:null,     wing:'#b8860b', beak:'#ff4500', crown:true,  glow:true,  skill:'大范围吸收金币' },
 ];
 let currentSkin = 0;                       // 当前装备皮肤（登录后从本地 + owned 判定）
 let walletCoins = 0;                       // 玩家总金币（来自后端）
@@ -556,7 +556,12 @@ function applyFruitEffect(type, x, y) {
   } else if (type === 2) {
     // 蓝色：护盾 +2，鸟体积变大一点
     bird.shield += 2;
-    bird.r = Math.min(bird.r + 2, bird.baseR + 6);
+    if (currentSkin === 2) {
+      // 薄荷天生体积小：护盾球的体积增幅也减小（+1，上限收紧到 baseR+3）
+      bird.r = Math.min(bird.r + 1, bird.baseR + 3);
+    } else {
+      bird.r = Math.min(bird.r + 2, bird.baseR + 6);
+    }
   } else {
     // 灰色：扣 2 分，鸟体积明显变小（与蓝色护盾果对称：蓝 +3、灰 -3，范围 ±6）
     score = Math.max(0, score - 2);
@@ -639,8 +644,8 @@ function update() {
       c.x -= spd;
       c.spin += 0.12;                 // 旋转动画
       c.bob += 0.05;                  // 上下浮动
-      // 薄荷皮肤技能：大范围磁吸金币（100px 内金币向小鸟靠拢，越近越快）
-      if (currentSkin === 2 && !c.eaten) {
+      // 黄金神鸟皮肤技能：大范围磁吸金币（100px 内金币向小鸟靠拢，越近越快）
+      if (currentSkin === 3 && !c.eaten) {
         const mx = bird.x - c.x;
         const my = bird.y - (c.y + Math.sin(c.bob) * 4);
         const md = Math.sqrt(mx * mx + my * my);
