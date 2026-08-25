@@ -47,9 +47,16 @@
     border-radius:10px; border:1px solid #3a3c66; background:#15162b; color:#fff; font-size:15px;
   }
   .liErr { color:#ff8080; font-size:12px; min-height:16px; margin-bottom:8px; text-align:center; }
-  .liBtn { width:100%; padding:11px; border:none; border-radius:10px; font-size:15px; font-weight:bold; margin-bottom:8px; cursor:pointer; }
-  .liPrimary { background:#ffd33d; color:#3a2c00; }
+  .liBtn { width:100%; padding:11px; border:none; border-radius:10px; font-size:15px; font-weight:bold; margin-bottom:8px; cursor:pointer;
+    transition: transform .06s ease, filter .12s ease, box-shadow .06s ease, opacity .15s ease; }
+  .liPrimary { background:#ffd33d; color:#3a2c00; box-shadow:0 3px 0 #c9a417; }   /* 底部硬阴影 = 立体凸起 */
+  .liPrimary:hover  { filter:brightness(1.06); transform:translateY(-1px); box-shadow:0 4px 0 #c9a417; }
+  .liPrimary:active { transform:translateY(2px); box-shadow:0 1px 0 #c9a417; filter:brightness(.93); }  /* 按下：下沉 + 阴影压扁 = 实体按压感 */
   .liBtn:not(.liPrimary) { background:#3a3c66; color:#fff; }
+  .liBtn:not(.liPrimary):hover  { filter:brightness(1.12); }
+  .liBtn:not(.liPrimary):active { transform:translateY(2px); filter:brightness(.9); }
+  .liBtn:disabled { opacity:.55; cursor:default; filter:none; transform:none; box-shadow:none; }  /* 请求中：变灰禁用，明确"已点·处理中" */
+  .liBtn:focus-visible { outline:2px solid #ffe08a; outline-offset:2px; }
   .liGuest { width:100%; background:none; border:none; color:#8a8cc0; font-size:12px; cursor:pointer; text-decoration:underline; }
 </style>
 </head>
@@ -1442,6 +1449,7 @@ liLogin.onclick = async () => {
   const u = liUser.value.trim(), p = liPass.value;
   if (!u || !p) { liErr.textContent = '请输入用户名和密码'; return; }
   liLogin.disabled = true;
+  liLogin.textContent = '登录中…';
   try {
     const r = await fetch('/api/login', {
       method: 'POST',
@@ -1455,6 +1463,7 @@ liLogin.onclick = async () => {
     liErr.textContent = '网络错误，请确认后端已启动';
   } finally {
     liLogin.disabled = false;
+    liLogin.textContent = '登录';
   }
 };
 liToRegister.onclick = () => showRegisterView();
@@ -1466,6 +1475,7 @@ rgRegister.onclick = async () => {
   if (p.length < 6) { rgErr.textContent = '密码至少 6 位'; return; }
   if (p !== p2) { rgErr.textContent = '两次输入的密码不一致'; return; }
   rgRegister.disabled = true;
+  rgRegister.textContent = '注册中…';
   try {
     const r = await fetch('/api/register', {
       method: 'POST',
@@ -1482,6 +1492,7 @@ rgRegister.onclick = async () => {
     rgErr.textContent = '网络错误，请确认后端已启动';
   } finally {
     rgRegister.disabled = false;
+    rgRegister.textContent = '确认注册';
   }
 };
 liGuest.onclick = () => { loginAs('游客', null, true); };
