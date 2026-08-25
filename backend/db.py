@@ -29,6 +29,27 @@ if USE_PG:
     # pg8000 只认 postgresql://，Render 给的是 postgres://，这里归一化一下
     _PG_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
+    # 进程级连接复用：避免每次请求都新建连接 + 等 Neon 计算端点从休眠唤醒（1~2s）。
+    # 首次唤醒后连接保持热，活跃期间请求降到几十 ms；连接断开（idle 超时）时自动重连。
+    _pg_conn = None
+
+    def _get_pg_conn():
+        global _pg_conn
+        if _pg_conn is not None:
+            try:
+                cur = _pg_conn.cursor()
+                cur.execute("SELECT 1")
+                cur.close()
+                if os.environ.get("DB_DEBUG"):
+                    print("[db] REUSE pg connection", flush=True)
+                return _pg_conn
+            except Exception:
+                _pg_conn = None
+        _pg_conn = pg8000.dbapi.connect(**_parse_pg_url(_PG_URL))
+        if os.environ.get("DB_DEBUG"):
+            print("[db] NEW pg connection", flush=True)
+        return _pg_conn
+
 
 def _parse_pg_url(url):
     """把 postgresql://... 解析成 pg8000.dbapi.connect 能吃的关键字参数。"""
@@ -113,8 +134,9 @@ class _Conn:
     - 结果行既能 row["col"] 也能 row[0]，兼容 sqlite3.Row 的写法。
     """
 
-    def __init__(self, conn):
+    def __init__(self, conn, persistent=False):
         self._conn = conn
+        self._persistent = persistent
 
     def execute(self, sql, params=()):
         if USE_PG and "?" in sql:
@@ -129,16 +151,18 @@ class _Conn:
         self._conn.commit()
 
     def close(self):
+        if self._persistent:
+            return  # PG 模式：归还连接池，不真正关闭，供后续请求复用
         self._conn.close()
 
 
 def get_conn():
     if USE_PG:
-        conn = pg8000.dbapi.connect(**_parse_pg_url(_PG_URL))
+        return _Conn(_get_pg_conn(), persistent=True)
     else:
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
-    return _Conn(conn)
+        return _Conn(conn, persistent=False)
 
 
 def init_db():
