@@ -183,6 +183,63 @@ function sfxFruit(t) {
 }
 function sfxScore()  { playTone(660, 0.05, 'sine', 0.08); }
 
+/* ---------- 背景音乐（Web Audio 程序化合成，无音频文件，轻快琶音循环）---------- */
+// 和弦进行 C - Am - F - G（I-vi-IV-V），每个和弦 2 拍，循环 8 拍
+const BGM_TONES = { C: 261.63, D: 293.66, E: 329.63, F: 349.23, G: 392.00, A: 440.00, B: 493.88, C2: 523.25 };
+const BGM_CHORDS = [
+  ['C', 'E', 'G', 'C2'],  // C
+  ['A', 'C', 'E', 'A'],   // Am
+  ['F', 'A', 'C', 'F'],   // F
+  ['G', 'B', 'D', 'G'],   // G
+];
+const BGM_BASS = { C: 130.81, A: 110.00, F: 87.31, G: 98.00 };  // 根音低八度
+const BGM_BPM = 105;      // 速度
+let bgmTimer = null;      // 调度定时器
+let bgmStep = 0;          // 当前 8 分音符步数
+let bgmNextT = 0;         // 下一个音符的调度时间
+
+// 播放单个 BGM 音符（短包络，八音盒感）
+function bgmTone(freq, t, dur, vol, type) {
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = type;
+  osc.frequency.value = freq;
+  gain.gain.setValueAtTime(vol, t);
+  gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  osc.connect(gain); gain.connect(audioCtx.destination);
+  osc.start(t); osc.stop(t + dur);
+}
+
+// 调度器：提前 0.3s 排好未来音符，保证循环无缝
+function bgmSchedule() {
+  if (!audioCtx || muted) return;
+  const stepDur = 60 / BGM_BPM / 2;   // 一个 8 分音符时长
+  while (bgmNextT < audioCtx.currentTime + 0.3) {
+    const chordIdx = Math.floor(bgmStep / 8) % 4;   // 每 8 步换和弦
+    const inChord = bgmStep % 8;
+    const chord = BGM_CHORDS[chordIdx];
+    // 琶音：每步弹一个和弦音，来回起伏
+    const arp = chord[inChord % 4];
+    bgmTone(BGM_TONES[arp], bgmNextT, stepDur * 0.9, 0.045, 'triangle');
+    // 低音：每 2 步（一拍）弹一次根音
+    if (inChord % 2 === 0) bgmTone(BGM_BASS[chord[0]], bgmNextT, stepDur * 1.8, 0.04, 'sine');
+    bgmStep++;
+    bgmNextT += stepDur;
+  }
+}
+
+function startBGM() {
+  if (!audioCtx || muted || bgmTimer) return;
+  if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+  bgmStep = 0;
+  bgmNextT = audioCtx.currentTime + 0.1;
+  bgmTimer = setInterval(bgmSchedule, 100);
+}
+
+function stopBGM() {
+  if (bgmTimer) { clearInterval(bgmTimer); bgmTimer = null; }
+}
+
 /* ---------- 难度递增系统：随分数提升，管道变快/缝隙变窄/生成更密 ---------- */
 // 每 15 分提升一级，上限 10 级
 function getDifficulty() { return Math.min(Math.floor(score / 15), 10); }
@@ -571,6 +628,8 @@ function applyFruitEffect(type, x, y) {
 
 /* ---------- 每帧更新逻辑 ---------- */
 function update() {
+  // 背景音乐：游戏中播放，其他状态停止（静音时自动停）
+  if (state === 'playing' && !muted) startBGM(); else stopBGM();
   // 粒子始终更新（任何状态下都继续飘散、淡出）
   for (const p of particles) {
     p.x += p.vx;
