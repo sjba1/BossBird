@@ -563,7 +563,7 @@ function applyFruitEffect(type, x, y) {
       bird.r = Math.min(bird.r + 2, bird.baseR + 6);
     }
   } else {
-    // 灰色：扣 2 分，鸟体积明显变小（与蓝色护盾果对称：蓝 +3、灰 -3，范围 ±6）
+    // 灰色：扣 2 分，鸟体积明显变小（体积范围 ±6，与蓝色护盾果对称）
     score = Math.max(0, score - 2);
     bird.r = Math.max(bird.r - 3, bird.baseR - 6);
   }
@@ -1269,7 +1269,7 @@ function drawFruitGuide(sy) {
   const items = [
     { c1: '#ff8c00', c2: '#ff4500', glow: '#ff5500', symbol: '\u788E', text: '\u51FB\u788E\u524D\u65B93\u7BA1\u9053  +3\u5206' },
     { c1: '#7ec8ff', c2: '#4ec0ff', glow: '#4ec0ff', symbol: '\u76FE', text: '\u62A4\u76FE +2  \u9E1F\u53D8\u5927' },
-    { c1: '#d0d0d0', c2: '#999999', glow: '#888888', symbol: '\u7F29', text: '\u5206\u6570 -5  \u9E1F\u53D8\u5C0F' },
+    { c1: '#d0d0d0', c2: '#999999', glow: '#888888', symbol: '\u7F29', text: '\u5206\u6570 -2  \u9E1F\u53D8\u5C0F' },
   ];
   drawText('\u9053\u5177\u56FE\u9274', cx, startY - 22, 'bold 15px sans-serif', '#fff', 'center');
   for (let i = 0; i < items.length; i++) {
