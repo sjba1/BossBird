@@ -1357,6 +1357,10 @@ function loadHistory() {
 // 记录一局成绩：优先写入后端，后端不可用时降级到 localStorage
 async function recordScore(s) {
   if (isGuest || !token) return;
+  // ── 乐观更新：发请求前就让本局立刻出现在界面，彻底消除"慢半拍" ──
+  const optimistic = { s: s, t: Date.now(), _opt: true };
+  history.unshift(optimistic);
+  if (s > best) best = s;
   let serverOk = false;
   try {
     const r = await fetch('/api/scores', {
@@ -1367,12 +1371,14 @@ async function recordScore(s) {
     serverOk = r.ok;
   } catch (e) {}
   if (!serverOk) {
-    // ── 无后端 / PWA 离线：写入 localStorage 兜底 ──
+    // POST 失败：回滚乐观项，回落到 localStorage 兜底（离线/后端不可达场景）
+    history = history.filter(it => it !== optimistic);
     const all = _loadHistLS();
     all.unshift({ s: s, t: Date.now() }); // 最新在前
     _saveHistLS(all);
+    best = Math.max(0, ...all.map(it => it.s));
   }
-  await fetchHistory(1);
+  await fetchHistory(1);   // 后端校正（数据一致时几乎无感）
 }
 // 登录成功后调用：保存 token，拉取历史，隐藏浮层
 async function loginAs(user, tok, guest) {
