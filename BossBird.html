@@ -1307,6 +1307,8 @@ let histTotal = 0;
 let histTotalPages = 1;
 let histLoading = false;   // 翻页请求进行中：用于防抖 + 加载提示
 let histHit = [];
+// 已看页内存缓存：键=页码 → 该页完整快照（history/分页/最高分）。翻回看过的页直接命中，不再发请求，省掉 1.2s 物理延迟。
+let pageCache = {};
 
 // ── localStorage 历史记录兜底（PWA / 无后端环境） ──
 function _lsHistKey() { return 'bossBirdHist_' + (currentUser || '_guest'); }
@@ -1321,8 +1323,16 @@ function _saveHistLS(arr) {
 
 // 从后端分页拉取当前用户历史，并刷新最高分
 // 后端不可用时自动降级到 localStorage（PWA 离线/纯前端模式）
-async function fetchHistory(page = 1) {
-  if (isGuest || !token) { history = []; histPage = 1; histTotal = 0; histTotalPages = 1; histLoading = false; return; }
+async function fetchHistory(page = 1, force = false) {
+  if (isGuest || !token) { history = []; histPage = 1; histTotal = 0; histTotalPages = 1; histLoading = false; pageCache = {}; return; }
+  // ── 已看页缓存命中：直接恢复快照，不发请求（省掉 1.2s 物理延迟） ──
+  if (!force && pageCache[page]) {
+    const c = pageCache[page];
+    history = c.history.slice(); histPage = c.page; histTotal = c.total;
+    histTotalPages = c.totalPages; currentUser = c.username; best = c.best;
+    histLoading = false;
+    return;
+  }
   histLoading = true;   // 加锁：翻页 / 校正请求进行中
   try {
     const r = await fetch('/api/scores?page=' + page + '&page_size=' + HIST_PAGE_SIZE, { headers: { 'Authorization': 'Bearer ' + token } });
@@ -1335,6 +1345,8 @@ async function fetchHistory(page = 1) {
     currentUser = j.username || currentUser;
     best = j.best || 0;
     _saveHistLS(history); // 后端成功时同步一份到 localStorage，供离线兜底
+    // 缓存本页完整快照（数组拷贝，避免与 history 共享引用被后续乐观更新污染），翻回时整体恢复
+    pageCache[page] = { history: history.slice(), total: histTotal, totalPages: histTotalPages, username: currentUser, best, page: histPage };
   } catch (e) {
     // ── 无后端 / PWA 离线：从 localStorage 兜底 ──
     const all = _loadHistLS();
@@ -1382,7 +1394,8 @@ async function recordScore(s) {
     _saveHistLS(all);
     best = Math.max(0, ...all.map(it => it.s));
   }
-  await fetchHistory(1);   // 后端校正（数据一致时几乎无感）
+  pageCache = {};          // 新成绩会改变分页顺序，清空缓存（下次浏览各页重新拉取，保证准确）
+  await fetchHistory(1, true);   // 后端校正（强制刷新第 1 页，含刚提交的这局）
 }
 // 登录成功后调用：保存 token，拉取历史，隐藏浮层
 async function loginAs(user, tok, guest) {
@@ -1390,7 +1403,8 @@ async function loginAs(user, tok, guest) {
   if (!isGuest) {
     token = tok || token;
     localStorage.setItem('bossBirdToken', token);
-    await fetchHistory();
+    pageCache = {};        // 登录/切换用户：清空上一用户的页缓存
+    await fetchHistory(1, true);
     currentSkin = Number(localStorage.getItem('bossBirdSkin_' + user) || 0);
     if (!isUnlocked(SKINS[currentSkin])) currentSkin = 0;
   } else {
@@ -1403,6 +1417,7 @@ async function loginAs(user, tok, guest) {
 // 退出登录：清空 token，回到登录浮层（停在登录视图）
 function logout() {
   loggedIn = false; isGuest = false; currentUser = null; token = null;
+  pageCache = {};        // 退出登录：清空当前用户的页缓存
   localStorage.removeItem('bossBirdToken');
   loginOverlay.style.display = 'flex';
   showLoginView();
