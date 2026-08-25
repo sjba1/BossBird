@@ -1305,6 +1305,7 @@ const HIST_PAGE_SIZE = 10;
 let histPage = 1;
 let histTotal = 0;
 let histTotalPages = 1;
+let histLoading = false;   // 翻页请求进行中：用于防抖 + 加载提示
 let histHit = [];
 
 // ── localStorage 历史记录兜底（PWA / 无后端环境） ──
@@ -1321,7 +1322,8 @@ function _saveHistLS(arr) {
 // 从后端分页拉取当前用户历史，并刷新最高分
 // 后端不可用时自动降级到 localStorage（PWA 离线/纯前端模式）
 async function fetchHistory(page = 1) {
-  if (isGuest || !token) { history = []; histPage = 1; histTotal = 0; histTotalPages = 1; return; }
+  if (isGuest || !token) { history = []; histPage = 1; histTotal = 0; histTotalPages = 1; histLoading = false; return; }
+  histLoading = true;   // 加锁：翻页 / 校正请求进行中
   try {
     const r = await fetch('/api/scores?page=' + page + '&page_size=' + HIST_PAGE_SIZE, { headers: { 'Authorization': 'Bearer ' + token } });
     if (!r.ok) throw new Error('unauthorized');
@@ -1346,6 +1348,8 @@ async function fetchHistory(page = 1) {
       const savedBest = localStorage.getItem((loggedIn && !isGuest) ? 'bossBirdBest_' + currentUser : 'bossBirdBest');
       best = savedBest ? Number(savedBest) : 0;
     }
+  } finally {
+    histLoading = false;  // 解锁
   }
 }
 
@@ -1541,7 +1545,7 @@ function drawHistoryPanel() {
   if (canNext) histHit.push({ x: nextX, y: py, r: btnR, kind: 'next' });
 
   // 页码
-  drawText('第 ' + histPage + ' / ' + histTotalPages + ' 页', W / 2, py + 1, '13px sans-serif', '#ffe08a', 'center');
+  drawText('第 ' + histPage + ' / ' + histTotalPages + ' 页' + (histLoading ? ' · 加载中…' : ''), W / 2, py + 1, '13px sans-serif', '#ffe08a', 'center');
 }
 
 // 退出按钮（ready 界面左上角）
@@ -1597,6 +1601,9 @@ function handleSkinTap(px, py) {
 function goHistPage(delta) {
   const np = histPage + delta;
   if (np < 1 || np > histTotalPages) return;
+  if (histLoading) return;        // 防抖：翻页请求进行中忽略重复点击，避免竞态跳错页
+  histPage = np;                   // 乐观翻页：立即更新页号，下一帧 UI 即响应（不再"点了没反应"）
+  history = [];                    // 清空当前页显示占位，等数据回填
   fetchHistory(np);
 }
 
