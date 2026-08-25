@@ -282,7 +282,7 @@ function reset() {
   bird.y = H / 2;
   bird.vy = 0;
   bird.hurt = false;
-  bird.shield = 0;
+  bird.shield = (currentSkin === 1) ? 1 : 0;   // 蓝鸟皮肤技能：开局自带 1 层护盾，其他皮肤 0
   bird.invuln = 0;
   bird.r = bird.baseR;       // 重置鸟的半径（吃果实可能改变过）
   pipes = [];
