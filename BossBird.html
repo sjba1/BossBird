@@ -96,6 +96,9 @@
     display:flex; align-items:center; padding:7px 10px; border-radius:8px;
     background:rgba(255,255,255,.05); margin-bottom:6px;
   }
+  /* 排行榜里的「我」：金边高亮，一眼区分 */
+  .fMe { background:rgba(255,211,61,.16); border:1px solid rgba(255,211,61,.45); }
+  .fMe .fName, .fMe .fBest { color:#ffe08a; font-weight:bold; }
   .fRank { width:30px; font-weight:bold; font-size:14px; }
   .fName { flex:1; font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .fBest { font-size:13px; font-weight:bold; color:#ffe08a; }
@@ -104,6 +107,20 @@
     background:#3a3c66; color:#fff; font-size:14px; font-weight:bold; cursor:pointer; }
   .fClose:active { transform:translateY(2px); }
   .fTip { font-size:11px; color:#8a8cc0; text-align:center; margin-top:8px; }
+  /* 好友面板里的「查看排行榜」入口按钮 */
+  .fRankBtn { width:100%; margin-top:8px; padding:11px; border:none; border-radius:10px;
+    background:#ffd33d; color:#3a2c00; font-size:14px; font-weight:bold; cursor:pointer; }
+  .fRankBtn:active { transform:translateY(2px); }
+  /* 排行榜浮层（独立一页） */
+  #rankOverlay {
+    position:fixed; inset:0; background:rgba(10,11,25,.93);
+    display:none; align-items:center; justify-content:center; z-index:70;
+  }
+  .rankCard {
+    width:320px; max-width:86vw; max-height:82vh; overflow-y:auto;
+    background:#1e2040; border:1px solid #33345f; border-radius:16px;
+    padding:20px 18px; box-shadow:0 12px 50px rgba(0,0,0,.5); color:#fff;
+  }
 </style>
 </head>
 <body>
@@ -137,7 +154,7 @@
   </div>
 </div>
 
-<!-- 好友浮层：我的好友码 + 输入好友码互加 + 好友排行榜 -->
+<!-- 好友浮层：我的好友码 + 输入好友码互加（排行榜拆到独立一页） -->
 <div id="friendsOverlay">
   <div class="friendCard">
     <div class="fTitle">好友</div>
@@ -152,10 +169,18 @@
       <button id="fAddBtn" class="fAddBtn">添加</button>
     </div>
     <div id="fMsg" class="fErr"></div>
-    <div class="fLabel">好友排行榜</div>
-    <div id="fList" class="fList"><div class="fEmpty">加载中…</div></div>
+    <button id="fRankBtn" class="fRankBtn">查看好友排行榜</button>
     <button id="fClose" class="fClose">关闭</button>
     <div class="fTip">互加好友无需对方同意，输入即双向成为好友</div>
+  </div>
+</div>
+
+<!-- 排行榜浮层：独立一页，从好友面板点「查看好友排行榜」进入 -->
+<div id="rankOverlay">
+  <div class="rankCard">
+    <div class="fTitle">好友排行榜</div>
+    <div id="rankList" class="fList"><div class="fEmpty">加载中…</div></div>
+    <button id="rankClose" class="fClose">返回</button>
   </div>
 </div>
 
@@ -1547,10 +1572,15 @@ const fMyUid  = document.getElementById('fMyUid');
 const fInput  = document.getElementById('fInput');
 const fAddBtn = document.getElementById('fAddBtn');
 const fMsg    = document.getElementById('fMsg');
-const fList   = document.getElementById('fList');
+const fRankBtn= document.getElementById('fRankBtn');
 const fClose  = document.getElementById('fClose');
 const fCopy   = document.getElementById('fCopy');
+// 排行榜浮层（独立一页）
+const rankOverlay = document.getElementById('rankOverlay');
+const rankList = document.getElementById('rankList');
+const rankClose = document.getElementById('rankClose');
 let myUid = '';                  // 我的好友码（打开面板时从 /api/friends 拉取）
+let myFriends = [];              // 缓存好友+自己榜单（打开排行榜页时渲染）
 let friendsBtnHit = { x: 93, y: 22, r: 16 };   // ready 界面「好友」按钮命中框（每帧重算）
 
 // 内存中的历史：[{s:分数, t:毫秒时间戳}]，最新在前（当前页，从后端拉取后填充）
@@ -1696,6 +1726,7 @@ function logout() {
   pageCache = {};        // 退出登录：清空当前用户的页缓存
   localStorage.removeItem('bossBirdToken');
   closeFriendsPanel();   // 顺手关掉好友浮层，避免退出后残留
+  closeRankPanel();      // 排行榜浮层同理
   loginOverlay.style.display = 'flex';
   showLoginView();
 }
@@ -1864,22 +1895,33 @@ function drawFriendsBtn() {
   friendsBtnHit = { x: x + w / 2, y: y + h / 2, r: 16 };
 }
 
-// 打开好友面板：立即拉取我的好友码 + 好友排行榜
+// 打开好友面板：拉取我的好友码 + 好友榜单（榜单缓存到 myFriends，点按钮才显示）
 async function openFriendsPanel() {
   friendsOverlay.style.display = 'flex';
   fMsg.textContent = '';
   fMsg.className = 'fErr';
   fInput.value = '';
   myUid = '';
+  myFriends = [];
   fMyUid.textContent = '加载中…';
-  fList.innerHTML = '<div class="fEmpty">加载中…</div>';
   await loadFriends();
 }
 function closeFriendsPanel() {
   friendsOverlay.style.display = 'none';
 }
 
-// 拉取我的好友码 + 好友排行榜（GET /api/friends，后端已按最高分降序）
+// 打开排行榜浮层（独立一页）：若已拉过数据直接渲染，否则先拉
+async function openRankPanel() {
+  rankOverlay.style.display = 'flex';
+  if (!myFriends.length) await loadFriends();
+  renderRankList(myFriends);
+}
+function closeRankPanel() {
+  rankOverlay.style.display = 'none';
+}
+
+// 拉取我的好友码 + 好友榜单（GET /api/friends，后端已按最高分降序）
+// 数据缓存到 myFriends，好友面板只显示好友码，排行榜页单独渲染
 async function loadFriends() {
   try {
     const r = await fetch('/api/friends', { headers: { 'Authorization': 'Bearer ' + token } });
@@ -1890,28 +1932,35 @@ async function loadFriends() {
     const j = await r.json();
     myUid = j.uid || '';
     fMyUid.textContent = myUid || '未分配';
-    renderFriendList(j.friends || []);
+    myFriends = j.friends || [];
   } catch (e) {
     fMyUid.textContent = '获取失败';
-    fList.innerHTML = '<div class="fEmpty">' + e.message + '</div>';
+    myFriends = [];
   }
 }
 
-// 渲染好友排行榜（名次 / 用户名 / 最高分，前三名金银铜）
-function renderFriendList(list) {
+// 渲染好友排行榜（名次 / 用户名 / 最高分，前三名金银铜；「我」高亮标为"你"）
+function renderRankList(list) {
   if (!list.length) {
-    fList.innerHTML = '<div class="fEmpty">还没有好友，输入好友码添加第一个吧</div>';
+    rankList.innerHTML = '<div class="fEmpty">还没有好友，输入好友码添加第一个吧</div>';
     return;
   }
   const rankColor = ['#ffd33d', '#c0c8d8', '#d08a5a'];
-  fList.innerHTML = list.map((f, i) => {
+  const rows = list.map((f, i) => {
     const rc = i < 3 ? rankColor[i] : '#8a8cc0';
-    return '<div class="fRow">' +
+    const name = f.me ? '你' : esc(f.username);
+    const cls = 'fRow' + (f.me ? ' fMe' : '');
+    return '<div class="' + cls + '">' +
       '<span class="fRank" style="color:' + rc + '">' + (i + 1) + '</span>' +
-      '<span class="fName">' + esc(f.username) + '</span>' +
+      '<span class="fName">' + name + '</span>' +
       '<span class="fBest">' + f.best + ' 分</span>' +
       '</div>';
   }).join('');
+  const onlyMe = list.every(f => f.me);
+  const tip = onlyMe
+    ? '<div class="fEmpty">排行榜目前只有你，加个好友一起比吧</div>'
+    : '';
+  rankList.innerHTML = rows + tip;
 }
 // HTML 转义（用户名是用户输入，防注入）
 function esc(s) {
@@ -1935,6 +1984,7 @@ async function addFriend() {
     setFMsg('已和 ' + j.friend + ' 互为好友！', true);
     fInput.value = '';
     await loadFriends();
+    if (rankOverlay.style.display === 'flex') renderRankList(myFriends);   // 若正在看排行榜，同步刷新
   } catch (e) {
     setFMsg('网络错误，请稍后再试', false);
   } finally {
@@ -1970,6 +2020,10 @@ fClose.onclick = closeFriendsPanel;
 fCopy.onclick = copyMyUid;
 friendsOverlay.addEventListener('click', (e) => { if (e.target === friendsOverlay) closeFriendsPanel(); });
 fInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') addFriend(); });
+// 排行榜浮层事件
+fRankBtn.onclick = openRankPanel;
+rankClose.onclick = closeRankPanel;
+rankOverlay.addEventListener('click', (e) => { if (e.target === rankOverlay) closeRankPanel(); });
 
 /* ---------- 主循环 ---------- */
 let lastT = 0;   // 上一帧时间戳（delta time 归一化：高刷屏手感与 60Hz 一致）

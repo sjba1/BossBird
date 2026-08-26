@@ -32,6 +32,10 @@ def list_friends():
             "SELECT uid FROM users WHERE username=?", (username,)
         ).fetchone()
         my_uid = me["uid"] if me else ""
+        my_best_row = conn.execute(
+            "SELECT MAX(score) FROM scores WHERE username=?", (username,)
+        ).fetchone()
+        my_best = my_best_row[0] if (my_best_row and my_best_row[0] is not None) else 0
 
         # 好友 = 与我成对（user_a 或 user_b 任一侧为我）的所有其他用户
         rows = conn.execute(
@@ -47,11 +51,12 @@ def list_friends():
     finally:
         conn.close()
 
-    friends = [
-        {"username": r["username"], "uid": r["uid"], "best": r["best"] or 0}
-        for r in rows
-    ]
-    # 好友排行榜：按最高分降序
+    # 排行榜包含「自己」+ 所有好友，按最高分降序统一排序
+    friends = [{"username": username, "uid": my_uid, "best": my_best, "me": True}]
+    for r in rows:
+        friends.append(
+            {"username": r["username"], "uid": r["uid"], "best": r["best"] or 0, "me": False}
+        )
     friends.sort(key=lambda x: -x["best"])
     return jsonify(uid=my_uid, friends=friends), 200
 
