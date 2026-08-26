@@ -7,7 +7,7 @@ import re
 from flask import Blueprint, jsonify, request
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from db import get_conn, now_iso
+from db import get_conn, now_iso, gen_friend_code
 from jwt_utils import encode_token
 
 auth_bp = Blueprint("auth", __name__)
@@ -40,11 +40,15 @@ def register():
         ).fetchone()
         if exists:
             return jsonify(error="该用户名已被注册"), 409
+        # 生成唯一好友码（与已有账号不冲突）
+        uid = gen_friend_code()
+        while conn.execute("SELECT id FROM users WHERE uid=?", (uid,)).fetchone():
+            uid = gen_friend_code()
         pw_hash = generate_password_hash(password)  # 默认 pbkdf2:sha256
         conn.execute(
-            "INSERT INTO users (username, pw_hash, created_at, coins, owned_skins) "
-            "VALUES (?,?,?,?,?)",
-            (username, pw_hash, now_iso(), 0, "0"),
+            "INSERT INTO users (username, pw_hash, created_at, coins, owned_skins, uid) "
+            "VALUES (?,?,?,?,?,?)",
+            (username, pw_hash, now_iso(), 0, "0", uid),
         )
         conn.commit()
     finally:
@@ -67,7 +71,7 @@ def login():
     conn = get_conn()
     try:
         row = conn.execute(
-            "SELECT pw_hash, coins, owned_skins FROM users WHERE username=?", (username,)
+            "SELECT pw_hash, coins, owned_skins, uid FROM users WHERE username=?", (username,)
         ).fetchone()
     finally:
         conn.close()
@@ -81,4 +85,5 @@ def login():
         username=username,
         coins=row["coins"],
         owned_skins=row["owned_skins"],
+        uid=row["uid"],
     ), 200

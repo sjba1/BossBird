@@ -8,11 +8,21 @@
 scores.py、auth.py 里的 SQL 继续用 ? 占位符即可，本模块在 Postgres 模式下自动翻译成 %s。
 """
 import os
+import random
 import sqlite3
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 from config import DB_PATH, DATABASE_URL
+
+# 好友码字母表：Crockford base32（去掉易混的 I L O U），
+# 6 位 + "BB-" 前缀，约 32^6 ≈ 10 亿种组合，足够小游戏且难猜。
+_FC_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
+
+
+def gen_friend_code():
+    """生成一个形如 BB-7F3K9X 的随机好友码。"""
+    return 'BB-' + ''.join(random.choice(_FC_ALPHABET) for _ in range(6))
 
 
 def now_iso():
@@ -183,7 +193,8 @@ def init_db():
                     pw_hash     TEXT NOT NULL,
                     created_at  TEXT NOT NULL,
                     coins       INTEGER NOT NULL DEFAULT 0,
-                    owned_skins TEXT NOT NULL DEFAULT '0'
+                    owned_skins TEXT NOT NULL DEFAULT '0',
+                    uid         VARCHAR(16) NOT NULL DEFAULT ''
                 )
                 """
             )
@@ -204,6 +215,9 @@ def init_db():
             conn.execute(
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS owned_skins TEXT NOT NULL DEFAULT '0'"
             )
+            conn.execute(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS uid VARCHAR(16) NOT NULL DEFAULT ''"
+            )
         else:
             conn.execute(
                 """
@@ -213,7 +227,8 @@ def init_db():
                     pw_hash     TEXT NOT NULL,
                     created_at  TEXT NOT NULL,
                     coins       INTEGER NOT NULL DEFAULT 0,
-                    owned_skins TEXT NOT NULL DEFAULT '0'
+                    owned_skins TEXT NOT NULL DEFAULT '0',
+                    uid         TEXT NOT NULL DEFAULT ''
                 )
                 """
             )
@@ -233,6 +248,28 @@ def init_db():
                 conn.execute("ALTER TABLE users ADD COLUMN coins INTEGER NOT NULL DEFAULT 0")
             if "owned_skins" not in cols:
                 conn.execute("ALTER TABLE users ADD COLUMN owned_skins TEXT NOT NULL DEFAULT '0'")
+            if "uid" not in cols:
+                conn.execute("ALTER TABLE users ADD COLUMN uid TEXT NOT NULL DEFAULT ''")
+        # 好友关系表：归一化对称对（user_a < user_b 字典序，避免重复/双向冗余）
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS friends (
+                user_a      TEXT NOT NULL,
+                user_b      TEXT NOT NULL,
+                created_at  TEXT NOT NULL,
+                PRIMARY KEY (user_a, user_b)
+            )
+            """
+        )
+        # 历史账号补 uid（新注册在 auth.register 已生成）：给缺失 uid 的行分配唯一好友码
+        orphan_rows = conn.execute(
+            "SELECT username FROM users WHERE uid IS NULL OR uid = ''"
+        ).fetchall()
+        for _r in orphan_rows:
+            _code = gen_friend_code()
+            while conn.execute("SELECT id FROM users WHERE uid = ?", (_code,)).fetchone():
+                _code = gen_friend_code()
+            conn.execute("UPDATE users SET uid = ? WHERE username = ?", (_code, _r["username"]))
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_scores_user ON scores(username)"
         )

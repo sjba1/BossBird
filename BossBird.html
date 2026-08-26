@@ -58,6 +58,52 @@
   .liBtn:disabled { opacity:.55; cursor:default; filter:none; transform:none; box-shadow:none; }  /* 请求中：变灰禁用，明确"已点·处理中" */
   .liBtn:focus-visible { outline:2px solid #ffe08a; outline-offset:2px; }
   .liGuest { width:100%; background:none; border:none; color:#8a8cc0; font-size:12px; cursor:pointer; text-decoration:underline; }
+  /* 好友浮层：好友码 + 添加好友 + 排行榜 */
+  #friendsOverlay {
+    position:fixed; inset:0;
+    background:rgba(10,11,25,.93);
+    display:none; align-items:center; justify-content:center;
+    z-index:60;
+  }
+  .friendCard {
+    width:320px; max-width:86vw; max-height:82vh; overflow-y:auto;
+    background:#1e2040; border:1px solid #33345f; border-radius:16px;
+    padding:20px 18px; box-shadow:0 12px 50px rgba(0,0,0,.5);
+    color:#fff;
+  }
+  .fTitle { color:#ffe08a; text-align:center; font-size:19px; font-weight:bold; margin-bottom:12px; }
+  .fLabel { font-size:12px; color:#9a9cc8; margin:10px 0 6px; }
+  .fUidRow { display:flex; align-items:center; gap:8px; }
+  .fUid {
+    flex:1; background:#15162b; border:1px solid #3a3c66; border-radius:10px;
+    padding:10px 12px; font-size:20px; font-weight:bold; letter-spacing:1px;
+    color:#ffe08a; text-align:center; font-family:monospace; user-select:all;
+  }
+  .fCopy { padding:9px 12px; border:none; border-radius:10px; background:#3a3c66; color:#fff;
+    font-size:13px; font-weight:bold; cursor:pointer; }
+  .fCopy:active { transform:translateY(2px); }
+  .fAddRow { display:flex; gap:8px; }
+  .fAddRow input {
+    flex:1; min-width:0; padding:10px 12px; border-radius:10px; border:1px solid #3a3c66;
+    background:#15162b; color:#fff; font-size:14px; text-transform:uppercase; letter-spacing:1px;
+  }
+  .fAddBtn { padding:10px 14px; border:none; border-radius:10px; background:#ffd33d; color:#3a2c00;
+    font-size:14px; font-weight:bold; cursor:pointer; }
+  .fAddBtn:disabled { opacity:.55; }
+  .fErr { color:#ff8080; font-size:12px; min-height:16px; margin:6px 0 2px; }
+  .fOk  { color:#7fe08a; font-size:12px; min-height:16px; margin:6px 0 2px; }
+  .fRow {
+    display:flex; align-items:center; padding:7px 10px; border-radius:8px;
+    background:rgba(255,255,255,.05); margin-bottom:6px;
+  }
+  .fRank { width:30px; font-weight:bold; font-size:14px; }
+  .fName { flex:1; font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .fBest { font-size:13px; font-weight:bold; color:#ffe08a; }
+  .fEmpty { text-align:center; color:#8a8cc0; font-size:13px; padding:14px 0; }
+  .fClose { width:100%; margin-top:10px; padding:10px; border:none; border-radius:10px;
+    background:#3a3c66; color:#fff; font-size:14px; font-weight:bold; cursor:pointer; }
+  .fClose:active { transform:translateY(2px); }
+  .fTip { font-size:11px; color:#8a8cc0; text-align:center; margin-top:8px; }
 </style>
 </head>
 <body>
@@ -88,6 +134,28 @@
       <button id="rgRegister" class="liBtn liPrimary">确认注册</button>
       <button id="rgBack" class="liBtn">返回登录</button>
     </div>
+  </div>
+</div>
+
+<!-- 好友浮层：我的好友码 + 输入好友码互加 + 好友排行榜 -->
+<div id="friendsOverlay">
+  <div class="friendCard">
+    <div class="fTitle">好友</div>
+    <div class="fLabel">我的好友码（发给朋友即可互加）</div>
+    <div class="fUidRow">
+      <div id="fMyUid" class="fUid">——</div>
+      <button id="fCopy" class="fCopy">复制</button>
+    </div>
+    <div class="fLabel">输入对方好友码添加</div>
+    <div class="fAddRow">
+      <input id="fInput" type="text" placeholder="如 BB-7F3K9X" maxlength="9" autocomplete="off" spellcheck="false">
+      <button id="fAddBtn" class="fAddBtn">添加</button>
+    </div>
+    <div id="fMsg" class="fErr"></div>
+    <div class="fLabel">好友排行榜</div>
+    <div id="fList" class="fList"><div class="fEmpty">加载中…</div></div>
+    <button id="fClose" class="fClose">关闭</button>
+    <div class="fTip">互加好友无需对方同意，输入即双向成为好友</div>
   </div>
 </div>
 
@@ -923,7 +991,7 @@ function draw() {
     drawText('Boss Bird', W / 2, 48, 'bold 40px sans-serif', '#fff', 'center');
     const who = loggedIn ? (isGuest ? '游客' : currentUser) : '';
     drawText('最高分  ' + best + (who ? '  ·  ' + who : '') + '  ·  金币 ' + walletCoins, W / 2, 74, '15px sans-serif', '#ffe9a8', 'center');
-    if (loggedIn) { drawHistoryPanel(); drawLogoutBtn(); }   // 已登录：显示最近20局 + 退出
+    if (loggedIn) { drawHistoryPanel(); drawLogoutBtn(); if (!isGuest) drawFriendsBtn(); }   // 已登录：显示最近20局 + 退出 + 好友
     drawFruitGuide(loggedIn ? 376 : 195);
     // 起飞提示（闪烁效果吸引注意）
     if (Math.floor(Date.now() / 500) % 2) {
@@ -1473,6 +1541,18 @@ const rgErr   = document.getElementById('rgErr');
 const rgRegister = document.getElementById('rgRegister');
 const rgBack  = document.getElementById('rgBack');
 
+// ── 好友系统（好友码 + 立即互为好友 + 好友排行榜）──
+const friendsOverlay = document.getElementById('friendsOverlay');
+const fMyUid  = document.getElementById('fMyUid');
+const fInput  = document.getElementById('fInput');
+const fAddBtn = document.getElementById('fAddBtn');
+const fMsg    = document.getElementById('fMsg');
+const fList   = document.getElementById('fList');
+const fClose  = document.getElementById('fClose');
+const fCopy   = document.getElementById('fCopy');
+let myUid = '';                  // 我的好友码（打开面板时从 /api/friends 拉取）
+let friendsBtnHit = { x: 93, y: 22, r: 16 };   // ready 界面「好友」按钮命中框（每帧重算）
+
 // 内存中的历史：[{s:分数, t:毫秒时间戳}]，最新在前（当前页，从后端拉取后填充）
 let history = [];
 
@@ -1615,6 +1695,7 @@ function logout() {
   loggedIn = false; isGuest = false; currentUser = null; token = null;
   pageCache = {};        // 退出登录：清空当前用户的页缓存
   localStorage.removeItem('bossBirdToken');
+  closeFriendsPanel();   // 顺手关掉好友浮层，避免退出后残留
   loginOverlay.style.display = 'flex';
   showLoginView();
 }
@@ -1773,6 +1854,123 @@ function drawLogoutBtn() {
   logoutHit = { x: x + w / 2, y: y + h / 2, r: 16 };
 }
 
+/* ---------- 好友系统：入口按钮 + 浮层（好友码 / 加好友 / 排行榜） ---------- */
+// ready 界面左上角「好友」按钮（退出按钮右侧）
+function drawFriendsBtn() {
+  const w = 46, h = 22, x = 70, y = 11;
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  roundRect(x, y, w, h, 8); ctx.fill();
+  drawText('好友', x + w / 2, y + h / 2 + 1, '12px sans-serif', '#fff', 'center');
+  friendsBtnHit = { x: x + w / 2, y: y + h / 2, r: 16 };
+}
+
+// 打开好友面板：立即拉取我的好友码 + 好友排行榜
+async function openFriendsPanel() {
+  friendsOverlay.style.display = 'flex';
+  fMsg.textContent = '';
+  fMsg.className = 'fErr';
+  fInput.value = '';
+  myUid = '';
+  fMyUid.textContent = '加载中…';
+  fList.innerHTML = '<div class="fEmpty">加载中…</div>';
+  await loadFriends();
+}
+function closeFriendsPanel() {
+  friendsOverlay.style.display = 'none';
+}
+
+// 拉取我的好友码 + 好友排行榜（GET /api/friends，后端已按最高分降序）
+async function loadFriends() {
+  try {
+    const r = await fetch('/api/friends', { headers: { 'Authorization': 'Bearer ' + token } });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      throw new Error(j.error || '加载失败');
+    }
+    const j = await r.json();
+    myUid = j.uid || '';
+    fMyUid.textContent = myUid || '未分配';
+    renderFriendList(j.friends || []);
+  } catch (e) {
+    fMyUid.textContent = '获取失败';
+    fList.innerHTML = '<div class="fEmpty">' + e.message + '</div>';
+  }
+}
+
+// 渲染好友排行榜（名次 / 用户名 / 最高分，前三名金银铜）
+function renderFriendList(list) {
+  if (!list.length) {
+    fList.innerHTML = '<div class="fEmpty">还没有好友，输入好友码添加第一个吧</div>';
+    return;
+  }
+  const rankColor = ['#ffd33d', '#c0c8d8', '#d08a5a'];
+  fList.innerHTML = list.map((f, i) => {
+    const rc = i < 3 ? rankColor[i] : '#8a8cc0';
+    return '<div class="fRow">' +
+      '<span class="fRank" style="color:' + rc + '">' + (i + 1) + '</span>' +
+      '<span class="fName">' + esc(f.username) + '</span>' +
+      '<span class="fBest">' + f.best + ' 分</span>' +
+      '</div>';
+  }).join('');
+}
+// HTML 转义（用户名是用户输入，防注入）
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// 添加好友：POST /api/friends/add（立即互为好友），成功后刷新排行榜
+async function addFriend() {
+  const code = fInput.value.trim().toUpperCase();
+  if (!code) { setFMsg('请输入好友码', false); return; }
+  fAddBtn.disabled = true;
+  fAddBtn.textContent = '添加中…';
+  try {
+    const r = await fetch('/api/friends/add', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({ friend_uid: code })
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { setFMsg(j.error || '添加失败', false); return; }
+    setFMsg('已和 ' + j.friend + ' 互为好友！', true);
+    fInput.value = '';
+    await loadFriends();
+  } catch (e) {
+    setFMsg('网络错误，请稍后再试', false);
+  } finally {
+    fAddBtn.disabled = false;
+    fAddBtn.textContent = '添加';
+  }
+}
+function setFMsg(text, ok) {
+  fMsg.textContent = text;
+  fMsg.className = ok ? 'fOk' : 'fErr';
+}
+
+// 复制我的好友码（优先 Clipboard API，失败降级 execCommand）
+function copyMyUid() {
+  if (!myUid) return;
+  const done = () => setFMsg('好友码已复制，发给朋友吧', true);
+  const fail = () => setFMsg('复制失败，请手动长按选择复制', false);
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(myUid).then(done, fail);
+  } else {
+    const ta = document.createElement('textarea');
+    ta.value = myUid;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); done(); } catch (_) { fail(); }
+    document.body.removeChild(ta);
+  }
+}
+
+// 好友浮层事件
+fAddBtn.onclick = addFriend;
+fClose.onclick = closeFriendsPanel;
+fCopy.onclick = copyMyUid;
+friendsOverlay.addEventListener('click', (e) => { if (e.target === friendsOverlay) closeFriendsPanel(); });
+fInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') addFriend(); });
+
 /* ---------- 主循环 ---------- */
 let lastT = 0;   // 上一帧时间戳（delta time 归一化：高刷屏手感与 60Hz 一致）
 function loop(now) {
@@ -1879,6 +2077,9 @@ function onInput(e) {
   if (state === 'ready' && loggedIn && !isGuest) {
     const ldx = p.x - logoutHit.x, ldy = p.y - logoutHit.y;
     if (ldx * ldx + ldy * ldy <= logoutHit.r * logoutHit.r) { logout(); return; }
+    // 点击左上角「好友」按钮 -> 打开好友面板
+    const fdx = p.x - friendsBtnHit.x, fdy = p.y - friendsBtnHit.y;
+    if (fdx * fdx + fdy * fdy <= friendsBtnHit.r * friendsBtnHit.r) { openFriendsPanel(); return; }
     // 点击历史分页按钮 -> 翻页
     for (const h of histHit) {
       const dx = p.x - h.x, dy = p.y - h.y;

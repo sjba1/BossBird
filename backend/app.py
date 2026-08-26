@@ -17,6 +17,7 @@ from auth import auth_bp
 from config import FRONTEND_DIR
 from db import init_db
 from scores import scores_bp
+from friends import friends_bp
 
 
 def create_app():
@@ -26,6 +27,7 @@ def create_app():
     init_db()
     app.register_blueprint(auth_bp, url_prefix="/api")
     app.register_blueprint(scores_bp, url_prefix="/api")
+    app.register_blueprint(friends_bp, url_prefix="/api")
 
     @app.route("/")
     def index():
