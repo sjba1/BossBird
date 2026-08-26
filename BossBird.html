@@ -198,6 +198,7 @@ const H = canvas.height;  // 画布高 640
 
 /* ---------- 崩溃诊断：把未捕获异常画到画布上，便于手机端定位 ---------- */
 let lastError = null;
+
 window.onerror = function(msg, url, line, col, err) {
   lastError = { msg: String(msg), line, col, stack: err && err.stack ? String(err.stack) : '' };
   console.error('[BossBird global error]', msg, 'line:', line, 'col:', col);
@@ -450,6 +451,7 @@ const SKINS = [
   { id:1, name:'小蓝',     price:90,  body:'#4ec0ff', wing:'#2b8fd6', beak:'#ff9a3d', crown:false, glow:false, skill:'开局自带1层护盾' },
   { id:2, name:'薄荷',     price:150, body:'#5ee2a8', wing:'#34b984', beak:'#ff6f91', crown:false, glow:false, skill:'天生体积小，护盾球变大幅度减少' },
   { id:3, name:'黄金神鸟', price:200, body:null,     wing:'#b8860b', beak:'#ff4500', crown:true,  glow:true,  skill:'大范围吸收金币' },
+  { id:4, name:'红鸟',     price:120, body:'#ff4d4d', wing:'#c0392b', beak:'#ffcf33', crown:false, glow:false, skill:'只生成红色果实，但果实效果较弱（只碎1管+加1分）' },
 ];
 let currentSkin = 0;                       // 当前装备皮肤（登录后从本地 + owned 判定）
 let walletCoins = 0;                       // 玩家总金币（来自后端）
@@ -653,7 +655,8 @@ function spawnFruit() {
   const cx = W + 20;
   const cr = 13;
   // 随机选择果实类型：1=红橙(碎管), 2=蓝(护盾), 3=灰(减分缩小)
-  const type = 1 + Math.floor(Math.random() * 3);
+  let type = 1 + Math.floor(Math.random() * 3);
+  if (currentSkin === 4) type = 1;   // 红鸟技能：只生成红色(红橙)果实
   // 与金币相同的防重叠逻辑
   let gapPipe = null;
   for (const p of pipes) {
@@ -730,17 +733,21 @@ function applyFruitEffect(type, x, y) {
   fruitsEaten++;
 
   if (type === 1) {
-    // 红橙色：击碎前方3个管道 + 加3分
+    // 红橙色：击碎前方管道 + 加分
+    // 红鸟(id:4)技能削弱版：只碎1管+加1分，避免「只刷红橙=纯上坡」超模；
+    // 普通鸟吃红橙仍维持碎3管+加3分的原强度
+    const crushN   = (currentSkin === 4) ? 1 : 3;
+    const addScore = (currentSkin === 4) ? 1 : 3;
     const ahead = pipes
       .filter(p => p.x + PIPE_W > bird.x - bird.r)
       .sort((a, b) => a.x - b.x);
-    const toCrush = ahead.slice(0, 3);
+    const toCrush = ahead.slice(0, crushN);
     for (const p of toCrush) {
       spawnPipeCrushEffect(p.x, p.gapY, p.gap);
       pipesCrushed++;
     }
     pipes = pipes.filter(p => !toCrush.includes(p));
-    score += 3;
+    score += addScore;
     sfxCrush();
   } else if (type === 2) {
     // 蓝色：护盾 +1，鸟体积变大一点
@@ -1375,12 +1382,14 @@ function drawShieldHUD(count) {
 // 皮肤选择区：在待机/结束界面底部画一排角色，可点选
 function layoutSkins() {
   skinHit = [];
-  const n = SKINS.length;
   const r = 15;
   const gap = 46;
+  // 按价格升序排列（显示顺序按价格，但 id 仍是真实皮肤 id，不影响装备/拥有判定）
+  const order = SKINS.map((s, i) => i).sort((a, b) => SKINS[a].price - SKINS[b].price);
+  const n = order.length;
   const startX = W / 2 - (n - 1) * gap / 2;
   const y = H - 78;
-  for (let i = 0; i < n; i++) skinHit.push({ x: startX + i * gap, y, r, id: i });
+  for (let i = 0; i < n; i++) skinHit.push({ x: startX + i * gap, y, r, id: order[i] });
 }
 
 // 小锁图标（画在已锁皮肤圆上）
@@ -1958,7 +1967,7 @@ function renderRankList(list) {
   }).join('');
   const onlyMe = list.every(f => f.me);
   const tip = onlyMe
-    ? '<div class="fEmpty">排行榜目前只有你，加个好友一起比吧</div>'
+    ? '<div class="fEmpty">排行榜目前只有你哦，去加个好友一起玩耍吧</div>'
     : '';
   rankList.innerHTML = rows + tip;
 }
