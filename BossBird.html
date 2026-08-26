@@ -103,6 +103,43 @@ const ctx = canvas.getContext('2d');
 const W = canvas.width;   // 画布宽 360
 const H = canvas.height;  // 画布高 640
 
+/* ---------- 崩溃诊断：把未捕获异常画到画布上，便于手机端定位 ---------- */
+let lastError = null;
+window.onerror = function(msg, url, line, col, err) {
+  lastError = { msg: String(msg), line, col, stack: err && err.stack ? String(err.stack) : '' };
+  console.error('[BossBird global error]', msg, 'line:', line, 'col:', col);
+  return false;
+};
+window.addEventListener('unhandledrejection', function(e) {
+  lastError = { msg: 'Unhandled: ' + String(e.reason), line: 0, col: 0, stack: '' };
+  console.error('[BossBird unhandledrejection]', e.reason);
+});
+
+function drawErrorScreen() {
+  if (!lastError) return;
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.9)';
+  ctx.fillRect(8, 8, W - 16, H - 16);
+  ctx.fillStyle = '#ff5555';
+  ctx.font = 'bold 13px monospace';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  const lines = [
+    'CRASH: ' + lastError.msg,
+    'Line: ' + lastError.line + '  Col: ' + lastError.col,
+  ];
+  if (lastError.stack) {
+    const stackLines = lastError.stack.split('\n').map(s => s.trim()).filter(s => s).slice(0, 8);
+    lines.push(...stackLines);
+  }
+  let y = 24;
+  for (const line of lines) {
+    ctx.fillText(line.slice(0, 48), 18, y);
+    y += 17;
+  }
+  ctx.restore();
+}
+
 /* ---------- 可调参数（改这里就能调难度/手感）---------- */
 const GRAVITY   = 0.43;   // 重力：越大下落越快
 const FLAP      = -8;     // 拍翅膀的向上速度（负数=向上）
@@ -932,6 +969,9 @@ function draw() {
 
   // 静音图标（右上角，所有界面都显示）
   drawMuteIcon();
+
+  // 若主循环抛异常，把错误信息直接画到画布上（手机端没有 Console）
+  drawErrorScreen();
 }
 
 /* ---------- 立体云朵：底部阴影 + 径向渐变主体 + 顶部高光 + 尾部粒子 ---------- */
@@ -1104,7 +1144,9 @@ function drawPipe(p) {
 }
 
 function bodyFill() {
-  const s = SKINS[currentSkin];
+  let skinIdx = currentSkin;
+  if (typeof skinIdx !== 'number' || isNaN(skinIdx) || skinIdx < 0 || skinIdx >= SKINS.length) skinIdx = 0;
+  const s = SKINS[skinIdx];
   if (s.body) return s.body;                 // 普通纯色皮肤
   // 黄金神鸟：金色径向渐变
   const grd = ctx.createRadialGradient(-3, -3, 2, 0, 0, bird.r + 4);
@@ -1134,7 +1176,12 @@ function drawCrown() {
 }
 
 function drawBird() {
-  const s = SKINS[currentSkin];
+  // 防御：皮肤索引异常时回退到默认皮肤，避免整帧崩溃
+  let skinIdx = currentSkin;
+  if (typeof skinIdx !== 'number' || isNaN(skinIdx) || skinIdx < 0 || skinIdx >= SKINS.length) {
+    skinIdx = 0;
+  }
+  const s = SKINS[skinIdx];
   ctx.save();
   ctx.translate(bird.x, bird.y);
   // 飞行时根据下落速度让小鸟微微低头/抬头
@@ -1474,7 +1521,7 @@ async function fetchHistory(page = 1, force = false) {
     currentUser = j.username || currentUser;
     best = j.best || 0;
     walletCoins = (j.coins != null) ? j.coins : walletCoins;          // 从后端载入总金币
-    ownedSkins = new Set(((j.owned_skins || '0').split(',')).map(Number));  // 载入已拥有皮肤
+    ownedSkins = new Set(((j.owned_skins || '0').split(',')).map(Number).filter(id => Number.isFinite(id)));  // 载入已拥有皮肤（过滤 NaN）
     _saveHistLS(history); // 后端成功时同步一份到 localStorage，供离线兜底
     // 缓存本页完整快照（数组拷贝，避免与 history 共享引用被后续乐观更新污染），翻回时整体恢复
     pageCache[page] = { history: history.slice(), total: histTotal, totalPages: histTotalPages, username: currentUser, best, page: histPage };
@@ -1547,12 +1594,18 @@ async function loginAs(user, tok, guest) {
     localStorage.setItem('bossBirdToken', token);
     pageCache = {};        // 登录/切换用户：清空上一用户的页缓存
     await fetchHistory(1, true);
-    currentSkin = Number(localStorage.getItem('bossBirdSkin_' + user) || 0);
-    if (!ownedSkins.has(currentSkin)) currentSkin = 0;  // 装备的皮肤必须已拥有
+    let savedSkin = Number(localStorage.getItem('bossBirdSkin_' + user) || 0);
+    if (!Number.isFinite(savedSkin) || savedSkin < 0 || savedSkin >= SKINS.length || !ownedSkins.has(savedSkin)) {
+      savedSkin = 0;
+    }
+    currentSkin = savedSkin;
   } else {
     best = 0; history = []; histPage = 1; histTotal = 0; histTotalPages = 1;
-    currentSkin = Number(localStorage.getItem('bossBirdSkin') || 0);
-    if (!ownedSkins.has(currentSkin)) currentSkin = 0;
+    let savedSkin = Number(localStorage.getItem('bossBirdSkin') || 0);
+    if (!Number.isFinite(savedSkin) || savedSkin < 0 || savedSkin >= SKINS.length || !ownedSkins.has(savedSkin)) {
+      savedSkin = 0;
+    }
+    currentSkin = savedSkin;
   }
   loginOverlay.style.display = 'none';
   showLoginView();   // 复位到登录视图，避免下次进来停在注册页
@@ -1723,13 +1776,18 @@ function drawLogoutBtn() {
 /* ---------- 主循环 ---------- */
 let lastT = 0;   // 上一帧时间戳（delta time 归一化：高刷屏手感与 60Hz 一致）
 function loop(now) {
-  if (!lastT) lastT = now;
-  let dt = (now - lastT) / (1000 / 60);   // 以 60fps 为基准的帧间隔系数
-  lastT = now;
-  if (dt > 3) dt = 3;                     // 切后台/卡顿后回来不跳变
-  if (dt < 0) dt = 0;
-  update(dt);
-  draw();
+  try {
+    if (!lastT) lastT = now;
+    let dt = (now - lastT) / (1000 / 60);   // 以 60fps 为基准的帧间隔系数
+    lastT = now;
+    if (dt > 3) dt = 3;                     // 切后台/卡顿后回来不跳变
+    if (dt < 0 || dt !== dt) dt = 0;        // NaN 保护：时间戳异常时兜底
+    update(dt);
+    draw();
+  } catch (e) {
+    lastError = { msg: String(e && e.message || e), line: 0, col: 0, stack: e && e.stack ? String(e.stack) : '' };
+    try { drawErrorScreen(); } catch (_) {}
+  }
   requestAnimationFrame(loop);
 }
 
@@ -1791,7 +1849,7 @@ async function buySkin(id) {
     if (!r.ok) throw new Error('buy failed');
     const j = await r.json();
     walletCoins = j.coins;                       // 服务端权威校正
-    ownedSkins = new Set(j.owned_skins.split(',').map(Number));
+    ownedSkins = new Set(j.owned_skins.split(',').map(Number).filter(id => Number.isFinite(id)));
   } catch (e) {
     // 回滚
     walletCoins += s.price;
