@@ -496,6 +496,8 @@ const SKINS = [
 let currentSkin = 0;                       // 当前装备皮肤（登录后从本地 + owned 判定）
 let walletCoins = 0;                       // 玩家总金币（来自后端）
 let ownedSkins = new Set([0]);             // 已拥有皮肤 id（默认含 0），登录后从后端载入
+let guestSkinTrials = 0;                   // 游客皮肤试玩次数：每次切换「不同」皮肤 +1
+const GUEST_TRIAL_MAX = 1;                 // 游客最多体验 1 次皮肤切换（所有皮肤合计）
 let lastGain = 0;                           // 最近一局获得的金币（结束界面展示用）
 let unlockMsg = '';        // 购买 / 余额提示文字
 let unlockMsgTimer = 0;    // 提示剩余帧数
@@ -1078,6 +1080,8 @@ function draw() {
       drawText('点击屏幕 / 空格 起飞', W / 2, H - 135, 'bold 17px sans-serif', '#fff', 'center');
     }
     drawSkinPicker();
+    // 待机界面也提示试玩次数用尽等信息（原仅结束界面有）
+    if (unlockMsgTimer > 0) drawText(unlockMsg, W / 2, 112, 'bold 16px sans-serif', '#ff9a9a', 'center');
   }
 
   // 结束界面
@@ -1099,7 +1103,7 @@ function draw() {
     const py = H / 2 + 28;
     drawText('金币 ' + coinsEaten + '  ·  碎管 ' + pipesCrushed + '  ·  果实 ' + fruitsEaten, W / 2, py, '14px sans-serif', '#ccc', 'center');
     drawText('难度等级  ' + getDifficulty(), W / 2, py + 22, '13px sans-serif', '#aaa', 'center');
-    drawText('本局金币 +' + lastGain + '  ·  总金币 ' + walletCoins, W / 2, py + 46, 'bold 15px sans-serif', '#ffe08a', 'center');
+    drawText('本局金币 +' + lastGain + '  ·  总金币 ' + walletCoins + (isGuest ? '（试玩，不保存）' : ''), W / 2, py + 46, 'bold 15px sans-serif', '#ffe08a', 'center');
     // 调侃文案
     if (score < 5) {
       drawText('保胎针打头上了？', W / 2, py + 72, 'bold 17px sans-serif', '#ff9aa2', 'center');
@@ -1461,7 +1465,15 @@ function drawLock(cx, cy) {
 // 画出皮肤选择条
 function drawSkinPicker() {
   layoutSkins();
-  drawText('选择角色皮肤（点金币兑换）', W / 2, H - 78 - 26, '13px sans-serif', '#fff', 'center');
+  if (isGuest) {
+    const left = GUEST_TRIAL_MAX - guestSkinTrials;
+    const txt = left > 0
+      ? '试玩模式 · 还能换 ' + left + ' 次其他皮肤（小黄鸟随时可切回）'
+      : '试玩已用完（共 ' + GUEST_TRIAL_MAX + ' 次），可随时切回小黄鸟';
+    drawText(txt, W / 2, H - 78 - 26, '13px sans-serif', left > 0 ? '#ffe08a' : '#ff9a9a', 'center');
+  } else {
+    drawText('选择角色皮肤（点金币兑换）', W / 2, H - 78 - 26, '13px sans-serif', '#fff', 'center');
+  }
   for (const h of skinHit) {
     const s = SKINS[h.id];
     const owned = isUnlocked(s);
@@ -1686,7 +1698,19 @@ function loadHistory() {
 
 // 记录一局成绩：优先写入后端，后端不可用时降级到 localStorage
 async function recordScore(s, coinsEatenThisRun) {
-  if (isGuest || !token) return;
+  // 游客：不写后端，但在本次会话内正常结算（最高分、历史、金币都算），
+  // 避免"金币 7 / 本局 +0"的自相矛盾；刷新或退出即清空，不落盘。
+  if (isGuest) {
+    const g = coinsEatenThisRun || 0;
+    walletCoins += g;
+    lastGain = g;
+    if (s > best) best = s;
+    history.unshift({ s: s, t: Date.now() });
+    if (history.length > HIST_PAGE_SIZE) history.length = HIST_PAGE_SIZE; // 游客只留最近一页，不做翻页
+    histPage = 1; histTotal = history.length; histTotalPages = 1;
+    return;
+  }
+  if (!token) return;
   // ── 乐观更新：发请求前就让本局立刻出现在界面，彻底消除"慢半拍" ──
   const optimistic = { s: s, t: Date.now(), _opt: true };
   history.unshift(optimistic);
@@ -1736,12 +1760,13 @@ async function loginAs(user, tok, guest) {
     }
     currentSkin = savedSkin;
   } else {
+    // 游客无持久账号：清空上一用户的钱包，避免继承其金币；
+    // 但试玩模式全皮肤解锁，让游客能体验每个皮肤的技能（数据不落盘，退出即清）
+    walletCoins = 0; lastGain = 0;
+    ownedSkins = new Set(SKINS.map(s => s.id));
+    guestSkinTrials = 0;   // 游客每次登录重置试玩次数（共 3 次）
     best = 0; history = []; histPage = 1; histTotal = 0; histTotalPages = 1;
-    let savedSkin = Number(localStorage.getItem('bossBirdSkin') || 0);
-    if (!Number.isFinite(savedSkin) || savedSkin < 0 || savedSkin >= SKINS.length || !ownedSkins.has(savedSkin)) {
-      savedSkin = 0;
-    }
-    currentSkin = savedSkin;
+    currentSkin = 0;   // 游客每次登录固定从「小黄鸟」(id:0) 开始，方便体验一次其他皮肤；不再读上次保存的 bossBirdSkin
   }
   loginOverlay.style.display = 'none';
   showLoginView();   // 复位到登录视图，避免下次进来停在注册页
@@ -2140,6 +2165,18 @@ function handleSkinTap(px, py) {
     if (dx * dx + dy * dy <= (h.r + 5) * (h.r + 5)) {
       const s = SKINS[h.id];
       if (isUnlocked(s)) {
+        if (h.id === currentSkin) return true;   // 点已装备皮肤：不消耗试玩次数
+        // 小黄鸟(id:0)在游客模式无限次：随时可切回，不消耗试玩次数
+        if (isGuest && h.id === 0) {
+          currentSkin = 0; persistSkin(); return true;
+        }
+        // 游客试玩上限：非小黄鸟皮肤已用完则禁止（小黄鸟仍可随时切回）
+        if (isGuest && guestSkinTrials >= GUEST_TRIAL_MAX) {
+          unlockMsg = '试玩次数已用完（共 ' + GUEST_TRIAL_MAX + ' 次），可切回小黄鸟重玩';
+          unlockMsgTimer = 150;
+          return true;   // 吞掉点击
+        }
+        if (isGuest) guestSkinTrials++;          // 切换到其他(非小黄鸟)皮肤：消耗 1 次试玩
         currentSkin = h.id;          // 已拥有：直接装备
         persistSkin();
       } else {
@@ -2212,7 +2249,7 @@ function handleTap(p) {
   const mdx = p.x - (W - 28), mdy = p.y - 28;
   if (mdx * mdx + mdy * mdy <= 18 * 18) { muted = !muted; return; }
   // 待机界面：点击左上角退出按钮 -> 退出登录
-  if (state === 'ready' && loggedIn && !isGuest) {
+  if (state === 'ready' && loggedIn) {
     const ldx = p.x - logoutHit.x, ldy = p.y - logoutHit.y;
     if (ldx * ldx + ldy * ldy <= logoutHit.r * logoutHit.r) { logout(); return; }
     // 点击左上角「好友」按钮 -> 打开好友面板
