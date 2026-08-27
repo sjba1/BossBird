@@ -1105,12 +1105,12 @@ function draw() {
     drawText('难度等级  ' + getDifficulty(), W / 2, py + 22, '13px sans-serif', '#aaa', 'center');
     drawText('本局金币 +' + lastGain + '  ·  总金币 ' + walletCoins + (isGuest ? '（试玩，不保存）' : ''), W / 2, py + 46, 'bold 15px sans-serif', '#ffe08a', 'center');
     // 调侃文案
-    if (score < 5) {
-      drawText('保胎针打头上了？', W / 2, py + 72, 'bold 17px sans-serif', '#ff9aa2', 'center');
-    } else if (score < 42) {
-      drawText('你和彬总还有一段差距', W / 2, py + 72, 'bold 17px sans-serif', '#9ec5ff', 'center');
+    if (score < 10) {
+      drawText('要不出去洗把脸？', W / 2, py + 72, 'bold 17px sans-serif', '#ff9aa2', 'center');
+    } else if (score < 100) {
+      drawText('也就一般', W / 2, py + 72, 'bold 17px sans-serif', '#9ec5ff', 'center');
     } else {
-      drawText('彬总附体！', W / 2, py + 72, 'bold 17px sans-serif', '#ffe08a', 'center');
+      drawText('神了！', W / 2, py + 72, 'bold 23px sans-serif', 'rgb(255, 141, 1)', 'center');
     }
     // 重启提示（闪烁）
     if (Math.floor(Date.now() / 500) % 2) {
