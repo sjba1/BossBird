@@ -121,6 +121,35 @@
     background:#1e2040; border:1px solid #33345f; border-radius:16px;
     padding:20px 18px; box-shadow:0 12px 50px rgba(0,0,0,.5); color:#fff;
   }
+  /* 技能图鉴浮层：独立一页，列出全部皮肤及技能说明 */
+  #skillCodexOverlay {
+    position:fixed; inset:0; background:rgba(10,11,25,.93);
+    display:none; align-items:center; justify-content:center; z-index:75;
+  }
+  .skillCard {
+    width:330px; max-width:88vw; max-height:84vh; overflow-y:auto;
+    background:#1e2040; border:1px solid #33345f; border-radius:16px;
+    padding:18px 16px; box-shadow:0 12px 50px rgba(0,0,0,.5); color:#fff;
+  }
+  .skillTitle { color:#ffe08a; text-align:center; font-size:19px; font-weight:bold; margin-bottom:4px; }
+  .skillSub { text-align:center; font-size:11px; color:#8a8cc0; margin-bottom:12px; }
+  /* 单个皮肤条目 */
+  .skillRow {
+    background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.08);
+    border-radius:12px; padding:11px 12px; margin-bottom:10px;
+  }
+  .skillHead { display:flex; align-items:center; gap:9px; margin-bottom:7px; }
+  .skillDot { width:18px; height:18px; border-radius:50%; flex:none; border:1.5px solid rgba(255,255,255,.7); }
+  .skillName { font-size:15px; font-weight:bold; color:#fff; }
+  .skillTag { margin-left:auto; font-size:11px; padding:2px 8px; border-radius:9px; }
+  .skillTag.owned { background:rgba(126,224,168,.18); color:#9effa0; }
+  .skillTag.locked { background:rgba(255,128,128,.16); color:#ff9a9a; }
+  .skillTag.none { background:rgba(255,255,255,.1); color:#bbb; }
+  .skillSkill { font-size:13px; color:#ffe08a; font-weight:bold; margin-bottom:5px; }
+  .skillDesc { font-size:12.5px; line-height:1.55; color:#d6d8f0; }
+  .skillClose { width:100%; margin-top:4px; padding:10px; border:none; border-radius:10px;
+    background:#3a3c66; color:#fff; font-size:14px; font-weight:bold; cursor:pointer; }
+  .skillClose:active { transform:translateY(2px); }
 </style>
 </head>
 <body>
@@ -181,6 +210,16 @@
     <div class="fTitle">好友排行榜</div>
     <div id="rankList" class="fList"><div class="fEmpty">加载中…</div></div>
     <button id="rankClose" class="fClose">返回</button>
+  </div>
+</div>
+
+<!-- 技能图鉴浮层：列出全部皮肤及技能说明（点击「技能图鉴」按钮进入） -->
+<div id="skillCodexOverlay">
+  <div class="skillCard">
+    <div class="skillTitle">技能图鉴</div>
+    <div class="skillSub">全部角色皮肤及其技能说明</div>
+    <div id="skillList"></div>
+    <button id="skillClose" class="skillClose">关闭</button>
   </div>
 </div>
 
@@ -445,13 +484,14 @@ const clouds = [
   { x: 180, y: 90,  s: 0.6, trail: [] },
 ];
 
-// 角色皮肤：id:0 默认拥有（免费）；其余用金币兑换，price 为兑换所需金币；skill 为皮肤技能（空=无）
+// 角色皮肤：id:0 默认拥有（免费）；其余用金币兑换，price 为兑换所需金币；
+// skill 为皮肤技能（短名，空=无）；skillDesc 为技能详细说明（技能图鉴用）
 const SKINS = [
-  { id:0, name:'小黄',     price:30,  body:'#ffd33d', wing:'#f7b500', beak:'#ff7a00', crown:false, glow:false, skill:'' },
-  { id:1, name:'小蓝',     price:90,  body:'#4ec0ff', wing:'#2b8fd6', beak:'#ff9a3d', crown:false, glow:false, skill:'开局自带1层护盾' },
-  { id:2, name:'薄荷',     price:150, body:'#5ee2a8', wing:'#34b984', beak:'#ff6f91', crown:false, glow:false, skill:'天生体积小，护盾球变大幅度减少' },
-  { id:3, name:'黄金神鸟', price:200, body:null,     wing:'#b8860b', beak:'#ff4500', crown:true,  glow:true,  skill:'大范围吸收金币' },
-  { id:4, name:'红鸟',     price:120, body:'#ff4d4d', wing:'#c0392b', beak:'#ffcf33', crown:false, glow:false, skill:'只生成红色果实，但果实效果较弱（只碎1管+加1分）' },
+  { id:0, name:'小黄',     price:30,  body:'#ffd33d', wing:'#f7b500', beak:'#ff7a00', crown:false, glow:false, skill:'',                                              skillDesc:'' },
+  { id:1, name:'小蓝',     price:90,  body:'#4ec0ff', wing:'#2b8fd6', beak:'#ff9a3d', crown:false, glow:false, skill:'开局自带1层护盾，每跳3管再得1层',          skillDesc:'出生就带 1 层护盾：撞到管道时不直接死亡，先消耗这层护盾，并获得短暂无敌与向上弹开；此外每成功跳过 3 根管道，还会额外获得 1 层护盾，护盾续航更持久。' },
+  { id:2, name:'薄荷',     price:150, body:'#5ee2a8', wing:'#34b984', beak:'#ff6f91', crown:false, glow:false, skill:'体积小，拾取范围不缩水',                    skillDesc:'天生体型更小，穿管更轻松；拾取范围按正常体型计算——果实和金币不会因为鸟变小而更难捡到。吃到护盾果（蓝色）时体积只增大一档，而其他皮肤会增大两档。' },
+  { id:3, name:'黄金神鸟', price:200, body:null,     wing:'#b8860b', beak:'#ff4500', crown:true,  glow:true,  skill:'大范围吸收金币，金币收益略增',              skillDesc:'自带磁吸光环：约 100 像素范围内的金币会自动朝你飞来；此外本局出现的金币会略多20%，攒钱包更快。' },
+  { id:4, name:'红鸟',     price:120, body:'#ff4d4d', wing:'#c0392b', beak:'#ffcf33', crown:false, glow:false, skill:'只生成红色果实，但果实效果较弱',            skillDesc:'场上只刷新红橙色果实（击碎管道+加分），但效果被削弱：每次只击碎 1 根管道、加 1 分，而不是普通鸟的碎 3 管+加 3 分。' },
 ];
 let currentSkin = 0;                       // 当前装备皮肤（登录后从本地 + owned 判定）
 let walletCoins = 0;                       // 玩家总金币（来自后端）
@@ -460,7 +500,6 @@ let lastGain = 0;                           // 最近一局获得的金币（结
 let unlockMsg = '';        // 购买 / 余额提示文字
 let unlockMsgTimer = 0;    // 提示剩余帧数
 let skinHit = [];          // 皮肤选择区的点击命中框（每帧重算）
-let hoverPos = null;       // 鼠标当前画布坐标（hover 技能提示用）；离开画布为 null
 
 // 某皮肤是否已拥有（依据后端返回的 owned_skins）
 function isUnlocked(s) { return ownedSkins.has(s.id); }
@@ -495,7 +534,8 @@ function flap() {
   if (!loggedIn) return;   // 未登录（浮层盖着）不响应
   initAudio();   // 首次操作时初始化音频（浏览器要求用户交互后才能播放）
   if (state === 'ready') {
-    state = 'playing';
+    reset();              // 按当前装备皮肤完整重置本局（修复：ready 阶段切换皮肤后，开局护盾/体积/护盾计数不刷新的残留 bug）
+    state = 'playing';    // reset() 会把 state 设回 'ready'，这里再切到游戏中
     bird.vy = FLAP;
     spawnParticles();
     sfxFlap();
@@ -828,7 +868,9 @@ function update(dt) {
         p.passed = true;
         score++;
         pipesPassedForShield++;               // 飞过的管道计数（击碎的不算）
-        if (pipesPassedForShield >= 5) {
+        // 蓝鸟皮肤技能：每跳过 3 根管道额外获得 1 层护盾；其他皮肤维持每 5 根
+        const shieldEvery = (currentSkin === 1) ? 3 : 5;
+        if (pipesPassedForShield >= shieldEvery) {
           bird.shield++;
           pipesPassedForShield = 0;
         }
@@ -860,10 +902,12 @@ function update(dt) {
         }
       }
       // 碰撞检测：小鸟圆 vs 金币圆
+      // 薄荷皮肤技能：拾取半径按正常体型(baseR)，不因体积小而缩小，金币一样好捡
+      const coinPickR = (currentSkin === 2) ? bird.baseR : bird.r;
       if (!c.eaten) {
         const dx = bird.x - c.x;
         const dy = bird.y - (c.y + Math.sin(c.bob) * 4);
-        if (dx * dx + dy * dy < (bird.r + c.r) * (bird.r + c.r)) {
+        if (dx * dx + dy * dy < (coinPickR + c.r) * (coinPickR + c.r)) {
           c.eaten = true;
           score++;                    // 吃到金币额外 +1 分
           coinsEaten++;
@@ -884,10 +928,12 @@ function update(dt) {
       f.x -= spd * dt;
       f.spin += 0.1 * dt;                 // 脉冲动画
       f.bob += 0.05 * dt;                 // 上下浮动
+      // 薄荷皮肤技能：拾取半径按正常体型，不因体积小而难捡果实
+      const fruitPickR = (currentSkin === 2) ? bird.baseR : bird.r;
       if (!f.eaten) {
         const dx = bird.x - f.x;
         const dy = bird.y - (f.y + Math.sin(f.bob) * 4);
-        if (dx * dx + dy * dy < (bird.r + f.r) * (bird.r + f.r)) {
+        if (dx * dx + dy * dy < (fruitPickR + f.r) * (fruitPickR + f.r)) {
           f.eaten = true;
           applyFruitEffect(f.type, f.x, f.y);   // 触发对应果实效果
         }
@@ -940,7 +986,9 @@ function gameOver() {
     newRecord = true;
     localStorage.setItem((loggedIn && !isGuest) ? 'bossBirdBest_' + currentUser : 'bossBirdBest', best); // 最高分存本地，下次还在
   }
-  recordScore(score, coinsEaten);   // 记入历史并按本局吃到金币数结算总金币（最多保留最近 100 局）
+  // 黄金神鸟皮肤技能：本局产生的金币略多一点（结算系数约 1.2，吃 5 个多约 1 个，温和不超标）
+  const coinGain = (currentSkin === 3) ? Math.round(coinsEaten * 1.2) : coinsEaten;
+  recordScore(score, coinGain);   // 记入历史并按本局吃到金币数结算总金币（最多保留最近 100 局）
 }
 
 /* ---------- 受伤结算：有护盾则消耗一层，否则死亡 ---------- */
@@ -1015,7 +1063,7 @@ function draw() {
     ctx.fillStyle = 'rgba(0,0,0,0.3)';
     ctx.fillRect(bx, by, bw, bh);
     ctx.fillStyle = '#5ad1ff';
-    ctx.fillRect(bx, by, bw * (pipesPassedForShield / 5), bh);
+    ctx.fillRect(bx, by, bw * (pipesPassedForShield / (currentSkin === 1 ? 3 : 5)), bh);
   }
 
   // 待机界面
@@ -1066,6 +1114,9 @@ function draw() {
     }
     drawSkinPicker();
   }
+
+  // 技能图鉴按钮（待机 / 结束界面左上角，点击打开图鉴）
+  if (state === 'ready' || state === 'over') drawSkillCodexBtn();
 
   // 静音图标（右上角，所有界面都显示）
   drawMuteIcon();
@@ -1411,17 +1462,9 @@ function drawLock(cx, cy) {
 function drawSkinPicker() {
   layoutSkins();
   drawText('选择角色皮肤（点金币兑换）', W / 2, H - 78 - 26, '13px sans-serif', '#fff', 'center');
-  // 先找出鼠标悬停命中的皮肤（有则隐藏其底部小字，让位给技能提示框）
-  let hoveredHit = null;
-  if (hoverPos) {
-    for (const h of skinHit) {
-      if (hitSkin(h, hoverPos.x, hoverPos.y)) { hoveredHit = h; break; }
-    }
-  }
   for (const h of skinHit) {
     const s = SKINS[h.id];
     const owned = isUnlocked(s);
-    const hovering = (h === hoveredHit);
     // 圆形底色 = 该皮肤颜色
     ctx.beginPath();
     ctx.arc(h.x, h.y, h.r, 0, Math.PI * 2);
@@ -1436,47 +1479,15 @@ function drawSkinPicker() {
       ctx.fillStyle = 'rgba(0,0,0,.45)';
       ctx.beginPath(); ctx.arc(h.x, h.y, h.r, 0, Math.PI * 2); ctx.fill();
       drawLock(h.x, h.y);
-      if (!hovering) drawText('金币' + s.price, h.x, h.y + h.r + 8, 'bold 10px sans-serif', '#ffe08a', 'center');
-    } else if (h.id !== currentSkin && !hovering) {
+      drawText('金币' + s.price, h.x, h.y + h.r + 8, 'bold 10px sans-serif', '#ffe08a', 'center');
+    } else if (h.id !== currentSkin) {
       // 已拥有但未装备：提示可点击装备
       drawText('可装备', h.x, h.y + h.r + 8, 'bold 10px sans-serif', '#9effa0', 'center');
     }
   }
-  // 鼠标悬停：在皮肤圆下方弹出技能提示
-  if (hoveredHit) drawSkillTip(hoveredHit);
 }
 
-// 命中判定：皮肤圆内 ∪ 其下方技能提示框内（避免鼠标移到提示框上时提示闪烁）
-function hitSkin(h, px, py) {
-  const dx = px - h.x, dy = py - h.y;
-  if (dx * dx + dy * dy <= (h.r + 5) * (h.r + 5)) return true;
-  const s = SKINS[h.id];
-  if (!s.skill) return false;
-  ctx.font = '11px sans-serif';
-  const w = ctx.measureText('技能：' + s.skill).width + 14;
-  const hh = 20;
-  const bx = Math.min(Math.max(h.x - w / 2, 2), W - w - 2);
-  const by = h.y + h.r + 6;
-  return px >= bx && px <= bx + w && py >= by && py <= by + hh;
-}
-
-// 悬停提示框：皮肤圆下方显示该皮肤技能（无技能则不显示）
-function drawSkillTip(h) {
-  const s = SKINS[h.id];
-  if (!s.skill) return;
-  const label = '技能：' + s.skill;
-  ctx.font = '11px sans-serif';
-  const w = ctx.measureText(label).width + 14;
-  const hh = 20;
-  const bx = Math.min(Math.max(h.x - w / 2, 2), W - w - 2);  // 防出界
-  const by = h.y + h.r + 6;                                  // 圆下方
-  ctx.fillStyle = 'rgba(0,0,0,.78)';
-  roundRect(bx, by, w, hh, 6);   // 用兼容版手绘圆角（原生 ctx.roundRect 旧浏览器不支持会崩）
-  ctx.fill();
-  drawText(label, bx + w / 2, by + hh / 2 + 4, '11px sans-serif', '#ffe08a', 'center');
-}
-
-/* ---------- 果实图鉴（开始界面展示3种果实效果）---------- */
+/* ---------- 果实图鉴（开始界面展示3种果实效果）---------- *//* ---------- 果实图鉴（开始界面展示3种果实效果）---------- */
 function drawFruitGuide(sy) {
   const cx = W / 2;
   const startY = sy || 195;
@@ -1590,6 +1601,12 @@ const rankList = document.getElementById('rankList');
 const rankClose = document.getElementById('rankClose');
 let myUid = '';                  // 我的好友码（打开面板时从 /api/friends 拉取）
 let myFriends = [];              // 缓存好友+自己榜单（打开排行榜页时渲染）
+
+// ── 技能图鉴浮层 ──
+const skillCodexOverlay = document.getElementById('skillCodexOverlay');
+const skillList = document.getElementById('skillList');
+const skillCloseBtn = document.getElementById('skillClose');
+let skillBtnHit = null;          // 画布上的「技能图鉴」按钮命中框
 let friendsBtnHit = { x: 93, y: 22, r: 16 };   // ready 界面「好友」按钮命中框（每帧重算）
 
 // 内存中的历史：[{s:分数, t:毫秒时间戳}]，最新在前（当前页，从后端拉取后填充）
@@ -1736,6 +1753,7 @@ function logout() {
   localStorage.removeItem('bossBirdToken');
   closeFriendsPanel();   // 顺手关掉好友浮层，避免退出后残留
   closeRankPanel();      // 排行榜浮层同理
+  closeSkillCodex();     // 技能图鉴浮层同理
   loginOverlay.style.display = 'flex';
   showLoginView();
 }
@@ -1904,6 +1922,15 @@ function drawFriendsBtn() {
   friendsBtnHit = { x: x + w / 2, y: y + h / 2, r: 16 };
 }
 
+// 技能图鉴按钮：待机/结束界面左上角（在「好友」右侧）
+function drawSkillCodexBtn() {
+  const w = 64, h = 22, x = 126, y = 11;
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  roundRect(x, y, w, h, 8); ctx.fill();
+  drawText('技能图鉴', x + w / 2, y + h / 2 + 1, '12px sans-serif', '#ffe08a', 'center');
+  skillBtnHit = { x: x + w / 2, y: y + h / 2, r: 16 };
+}
+
 // 打开好友面板：拉取我的好友码 + 好友榜单（榜单缓存到 myFriends，点按钮才显示）
 async function openFriendsPanel() {
   friendsOverlay.style.display = 'flex';
@@ -2034,6 +2061,49 @@ fRankBtn.onclick = openRankPanel;
 rankClose.onclick = closeRankPanel;
 rankOverlay.addEventListener('click', (e) => { if (e.target === rankOverlay) closeRankPanel(); });
 
+// ── 技能图鉴浮层 ──
+// 打开：渲染全部皮肤（按价格升序）及技能说明，无需登录
+function openSkillCodex() {
+  renderSkillCodex();
+  skillCodexOverlay.style.display = 'flex';
+}
+function closeSkillCodex() {
+  skillCodexOverlay.style.display = 'none';
+}
+// 渲染图鉴内容：列出每个皮肤、名称、拥有状态、技能名与说明
+function renderSkillCodex() {
+  // 按价格升序排列，与皮肤选择条顺序一致
+  const order = SKINS.map((s, i) => i).sort((a, b) => SKINS[a].price - SKINS[b].price);
+  const rows = order.map((idx) => {
+    const s = SKINS[idx];
+    const owned = isUnlocked(s);
+    let tag, tagCls;
+    if (!s.skill) { tag = '无技能'; tagCls = 'none'; }
+    else if (owned) { tag = '已拥有'; tagCls = 'owned'; }
+    else { tag = '金币 ' + s.price; tagCls = 'locked'; }
+    const dotColor = s.body ? s.body : '#ffd700';
+    const skillLine = s.skill
+      ? '<div class="skillSkill">技能：' + esc(s.skill) + '</div>'
+      : '<div class="skillSkill">技能：无</div>';
+    const descLine = s.skillDesc
+      ? '<div class="skillDesc">' + esc(s.skillDesc) + '</div>'
+      : '<div class="skillDesc">基础角色，没有任何特殊能力，适合新手熟悉操作。</div>';
+    return '<div class="skillRow">' +
+      '<div class="skillHead">' +
+        '<span class="skillDot" style="background:' + dotColor + '"></span>' +
+        '<span class="skillName">' + esc(s.name) + '</span>' +
+        '<span class="skillTag ' + tagCls + '">' + tag + '</span>' +
+      '</div>' +
+      skillLine +
+      descLine +
+    '</div>';
+  }).join('');
+  skillList.innerHTML = rows;
+}
+// 技能图鉴浮层事件
+skillCloseBtn.onclick = closeSkillCodex;
+skillCodexOverlay.addEventListener('click', (e) => { if (e.target === skillCodexOverlay) closeSkillCodex(); });
+
 /* ---------- 主循环 ---------- */
 let lastT = 0;   // 上一帧时间戳（delta time 归一化：高刷屏手感与 60Hz 一致）
 function loop(now) {
@@ -2133,6 +2203,11 @@ function goHistPage(delta) {
 function onInput(e) {
   e.preventDefault(); // 防止手机上双击放大、空格滚动页面
   const p = canvasPos(e);
+  handleTap(p);
+}
+
+// 一次「点击/轻点」的统一处理（桌面 mousedown 与移动端共用）
+function handleTap(p) {
   // 点击右上角静音图标 -> 切换静音
   const mdx = p.x - (W - 28), mdy = p.y - 28;
   if (mdx * mdx + mdy * mdy <= 18 * 18) { muted = !muted; return; }
@@ -2151,15 +2226,17 @@ function onInput(e) {
   }
   // 待机/结束界面：先判断是否点到了皮肤选择区
   if (state === 'ready' || state === 'over') {
+    // 点击「技能图鉴」按钮 -> 打开图鉴浮层
+    if (skillBtnHit) {
+      const sdx = p.x - skillBtnHit.x, sdy = p.y - skillBtnHit.y;
+      if (sdx * sdx + sdy * sdy <= skillBtnHit.r * skillBtnHit.r) { openSkillCodex(); return; }
+    }
     if (handleSkinTap(p.x, p.y)) return;
   }
   flap();
 }
 canvas.addEventListener('mousedown', onInput);
 canvas.addEventListener('touchstart', onInput, { passive: false });
-// hover 技能提示：记录鼠标位置，绘制皮肤条时检测悬停
-canvas.addEventListener('mousemove', (e) => { hoverPos = canvasPos(e); });
-canvas.addEventListener('mouseleave', () => { hoverPos = null; });
 window.addEventListener('keydown', (e) => {
   if (e.code === 'Space') { e.preventDefault(); flap(); }
   if (e.code === 'KeyM') { muted = !muted; }
