@@ -492,7 +492,7 @@ const SKINS = [
   { id:0, name:'小黄',     price:30,  body:'#ffd33d', wing:'#f7b500', beak:'#ff7a00', crown:false, glow:false, skill:'',                                              skillDesc:'' },
   { id:1, name:'小蓝',     price:90,  body:'#4ec0ff', wing:'#2b8fd6', beak:'#ff9a3d', crown:false, glow:false, skill:'开局自带1层护盾，每跳4管再得1层',          skillDesc:'出生就带 1 层护盾：撞到管道时不直接死亡，先消耗这层护盾，并获得短暂无敌与向上弹开；此外每成功跳过 4 根管道，还会额外获得 1 层护盾，护盾续航更持久。' },
   { id:2, name:'薄荷',     price:150, body:'#5ee2a8', wing:'#34b984', beak:'#ff6f91', crown:false, glow:false, skill:'体积小，拾取范围不缩水',                    skillDesc:'天生体型更小，穿管更轻松；拾取范围按正常体型计算——果实和金币不会因为鸟变小而更难捡到。吃到护盾果（蓝色）时体积只增大一档，而其他皮肤会增大两档。' },
-  { id:3, name:'黄金神鸟', price:260, body:null,     wing:'#b8860b', beak:'#ff4500', crown:true,  glow:true,  skill:'吸金币15%暴击x3·金币增益+25%',           skillDesc:'自带磁吸光环：约 100 像素范围内的金币会自动朝你飞来。被动「暴击」：每次吸到金币有 15% 概率触发，该金币收益 ×3 并伴随全屏金光闪烁。结算「技能增益」：局内金币数量与刷新频率保持正常，本局吃到的金币在结算时按 25% 增益计入总金币（吃 N 个记约 N×1.25 个）。' },
+  { id:3, name:'黄金神鸟', price:260, body:null,     wing:'#b8860b', beak:'#ff4500', crown:true,  glow:true,  skill:'吸金币15%暴击x3·金币增益+50%',           skillDesc:'自带磁吸光环：约 100 像素范围内的金币会自动朝你飞来。被动「暴击」：每次吸到金币有 15% 概率触发，该金币收益 ×3 并伴随全屏金光闪烁。结算「技能增益」：局内金币数量与刷新频率保持正常，本局吃到的金币在结算时按 50% 增益计入总金币（吃 N 个记约 N×1.5 个）。' },
   { id:4, name:'红鸟',     price:120, body:'#ff4d4d', wing:'#c0392b', beak:'#ffcf33', crown:false, glow:false, skill:'只生成红色果实，但果实效果较弱',            skillDesc:'场上只刷新红橙色果实（击碎管道+加分），但效果被削弱：每次只击碎 1 根管道、加 1 分，而不是普通鸟的碎 3 管+加 3 分。' },
   { id:5, name:'白鸟',     price:180, body:'#ffffff', wing:'#d9d9e6', beak:'#ff7a00', crown:false, glow:false, skill:'吃灰果反变小并 +1 分',                  skillDesc:'吃到灰色果实时效果反转：不再扣分，而是「鸟体积明显变小」并「+1 分」。等于把原本的负面道具变成增益——越吃越灵巧还能涨分。' },
   { id:6, name:'黑鸟',     price:220, body:'#1c1c1c', wing:'#444444', beak:'#ff7a00', crown:false, glow:false, skill:'30%刷黑果，吃后6秒双倍+免减益',     skillDesc:'游戏中有 30% 概率刷新黑色果实；吃到后进入 6 秒「双倍+免疫」状态：金币与红橙果实效果翻倍（碎管与加分×2），灰色果实免疫（正常缩小但不扣分）；但护盾果实只正常获得（不翻倍）。' },
@@ -512,11 +512,40 @@ let skinHit = [];          // 皮肤选择区的点击命中框（每帧重算�
 function isUnlocked(s) { return ownedSkins.has(s.id); }
 
 /* ---------- 初始化 / 重置 ---------- */
+/* ---------- 传送门彩蛋：每局 13.333% 概率触发一次，进入夜空（有太阳·无管道）采集 10s ---------- */
+const PORTAL_ENABLED    = true;        // 总开关（想关就设 false）
+const PORTAL_CHANCE     = 0.13333;     // 每局触发概率（约 2/15）
+const PORTAL_DURATION   = 600;         // 夜空持续帧数（60fps ≈ 10 秒）
+const PORTAL_MIN_DELAY  = 8 * 60;      // 最早触发：开局后约 8 秒
+const PORTAL_MAX_DELAY  = 20 * 60;     // 最晚触发：开局后约 20 秒
+let portalArmed     = false;  // 本局是否已安排传送门
+let portalAt        = 0;      // 计划触发的 run 帧
+let inPortal        = false;  // 当前是否在夜空场景
+let portalTimer     = 0;      // 夜空剩余帧数
+let portalFade      = 0;      // 0→1 淡入 / 1→0 淡出（交叉过渡用）
+let portalFadingOut = false;  // 是否正在淡出返回
+let runFrames       = 0;      // 本局已进行帧数（触发判定用）
+
+function enterPortal() {
+  inPortal = true;
+  portalTimer = PORTAL_DURATION;
+  portalFade = 0;            // 从 0 淡入夜空
+  portalArmed = false;       // 一局只触发一次
+  pipes = [];                // 清空现有管道（被"传送"走）
+}
+
 function reset() {
   state = 'ready';
   score = 0;
   frame = 0;
   pipeSpawnTimer = 0;
+  portalArmed = PORTAL_ENABLED && Math.random() < PORTAL_CHANCE;
+  portalAt = PORTAL_MIN_DELAY + Math.random() * (PORTAL_MAX_DELAY - PORTAL_MIN_DELAY);
+  inPortal = false;
+  portalTimer = 0;
+  portalFade = 0;
+  portalFadingOut = false;
+  runFrames = 0;
   bird.y = H / 2;
   bird.vy = 0;
   bird.hurt = false;
@@ -877,16 +906,32 @@ function update(dt) {
   }
 
   if (state === 'playing') {
+    // 传送门彩蛋：累计本局帧数并判定触发 / 倒计时
+    runFrames += dt;
+    if (PORTAL_ENABLED && portalArmed && !inPortal && !portalFadingOut && runFrames >= portalAt) {
+      enterPortal();
+    }
+    if (inPortal) {
+      portalTimer -= dt;
+      if (portalFade < 1) portalFade = Math.min(1, portalFade + 0.05 * dt);   // 淡入夜空
+      if (portalTimer <= 0) { inPortal = false; portalFadingOut = true; }     // 时间到，开始淡出
+    } else if (portalFadingOut) {
+      portalFade -= 0.05 * dt;
+      if (portalFade <= 0) { portalFade = 0; portalFadingOut = false; }
+    }
+
     // 1. 小鸟受重力影响下落（乘 dt：高刷屏不会下坠更快）
     bird.vy += GRAVITY * dt;
     bird.y  += bird.vy * dt;
     if (bird.invuln > 0) bird.invuln -= dt;   // 无敌帧倒计时（按时间）
 
-    // 2. 定时生成管道（按时间累计，取代帧取模）
-    pipeSpawnTimer += dt;
-    if (pipeSpawnTimer >= curSpawn()) {
-      spawnPipe();
-      pipeSpawnTimer = 0;
+    // 2. 定时生成管道（夜空期间暂停生成，返回后恢复）
+    if (!inPortal) {
+      pipeSpawnTimer += dt;
+      if (pipeSpawnTimer >= curSpawn()) {
+        spawnPipe();
+        pipeSpawnTimer = 0;
+      }
     }
 
     // 3. 管道向左移动，并给穿过的管道计分
@@ -1013,13 +1058,14 @@ function update(dt) {
 function gameOver() {
   state = 'over';
   bird.hurt = true;
+  inPortal = false; portalFadingOut = false; portalFade = 0;   // 清理传送门视觉，结束界面回到白天
   sfxDeath();
   if (score > best) {
     best = score;
     newRecord = true;
     localStorage.setItem((loggedIn && !isGuest) ? 'bossBirdBest_' + currentUser : 'bossBirdBest', best); // 最高分存本地，下次还在
   }
-  // 黄金神鸟皮肤技能：结算时金币按「技能增益」25% 提升（吃 N 个记 ≈ N×1.5，温和不超标）
+  // 黄金神鸟皮肤技能：结算时金币按「技能增益」50% 提升（吃 N 个记 ≈ N×1.5，温和不超标）
   const coinGain = (currentSkin === 3) ? Math.round(coinsEaten * 1.5) : coinsEaten;
   recordScore(score, coinGain);   // 记入历史并按本局吃到金币数结算总金币（最多保留最近 100 局）
 }
@@ -1039,6 +1085,48 @@ function takeHit() {
 }
 
 /* ---------- 绘制 ---------- */
+/* ---------- 传送门夜空：有太阳但黑天，交叉淡入淡出覆盖在白天场景之上 ---------- */
+function drawNightSky(alpha) {
+  ctx.save();
+  // 夜空渐变（深蓝紫 → 近黑）
+  const ng = ctx.createLinearGradient(0, 0, 0, H);
+  ng.addColorStop(0, '#0b1026');
+  ng.addColorStop(0.6, '#1a1740');
+  ng.addColorStop(1, '#241a4d');
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = ng;
+  ctx.fillRect(0, 0, W, H);
+  // 星星（固定位置点缀）
+  ctx.fillStyle = '#ffffff';
+  const stars = [[60,60],[140,40],[230,90],[330,50],[420,80],[510,45],[600,100],[90,140],[300,130],[470,150],[560,170],[180,185]];
+  for (const s of stars) {
+    ctx.globalAlpha = alpha * 0.8;
+    ctx.beginPath();
+    ctx.arc(s[0], s[1], 1.6, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // 苍白的太阳（夜空彩蛋的核心视觉）：外晕 + 本体
+  const sx = W * 0.72, sy = H * 0.28, sr = 46;
+  const halo = ctx.createRadialGradient(sx, sy, sr * 0.3, sx, sy, sr * 2.2);
+  halo.addColorStop(0, 'rgba(255,236,170,0.55)');
+  halo.addColorStop(1, 'rgba(255,236,170,0)');
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(sx, sy, sr * 2.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(255,245,210,0.95)';
+  ctx.beginPath();
+  ctx.arc(sx, sy, sr, 0, Math.PI * 2);
+  ctx.fill();
+  // 夜土地面（让"掉地仍死"在视觉上有落点）
+  ctx.fillStyle = '#1c1530';
+  ctx.fillRect(0, H - GROUND_H, W, GROUND_H);
+  ctx.fillStyle = '#2e2350';
+  ctx.fillRect(0, H - GROUND_H, W, 14);
+  ctx.restore();
+}
+
 function draw() {
   // 天空渐变背景（随难度从白天渐变到夜晚）
   const skyIdx = getDifficulty();
@@ -1059,6 +1147,9 @@ function draw() {
   ctx.fillRect(0, H - GROUND_H, W, GROUND_H);
   ctx.fillStyle = '#5ee270';
   ctx.fillRect(0, H - GROUND_H, W, 14);
+
+  // 传送门夜空场景（交叉淡入淡出；无管道、金币道具照常产出）
+  if (portalFade > 0) drawNightSky(portalFade);
 
   // 金币
   for (const c of coins) drawCoin(c);
@@ -1085,6 +1176,11 @@ function draw() {
     // 难度等级（分数下方小字，Lv.0 时不显示）
     const d = getDifficulty();
     if (d > 0) drawText('Lv.' + d, W / 2, 118, 'bold 14px sans-serif', 'rgba(255,255,255,0.7)', 'center');
+    // 传送门彩蛋提示 + 倒计时（夜空期间）
+    if (inPortal) {
+      drawText('传送门 · 夜空彩蛋', W / 2, 150, 'bold 18px sans-serif', 'rgba(255,230,150,0.95)', 'center');
+      drawText('剩余 ' + Math.ceil(portalTimer / 60) + 's', W / 2, 174, 'bold 15px sans-serif', 'rgba(255,255,255,0.85)', 'center');
+    }
   }
 
   // 护盾层数（左上角，仅游戏进行中显示；待机/结算界面不残留）
