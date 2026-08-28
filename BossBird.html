@@ -349,6 +349,7 @@ function sfxDeath()  { playSlide(350, 60, 0.6, 'sawtooth', 0.15); }
 function sfxFruit(t) {
   if (t === 1)      playSlide(300, 900, 0.18, 'square', 0.1);   // 红橙：上升爆破
   else if (t === 2) playSlide(500, 800, 0.15, 'sine', 0.1);     // 蓝：平滑上升
+  else if (t === 4) playSlide(200, 1400, 0.25, 'sine', 0.12);   // 黑：强力上扬（激活 buff）
   else              playSlide(400, 120, 0.2, 'triangle', 0.1);  // 灰：下降
 }
 function sfxScore()  { playTone(660, 0.05, 'sine', 0.08); }
@@ -466,6 +467,7 @@ let particles = [];
 // 金币数组：游戏中随机刷新，吃到 +1 分
 let coins = [];
 let coinSpawnTimer = 0;
+let blackBuffTimer = 0;   // 黑鸟技能：黑色果实触发的 6 秒「双倍+免疫」buff 剩余帧数（360≈6秒）
 
 // 技能果实数组：随机刷新，3种类型
 //   type 1: 红橙色 — 击碎前方3个管道 + 加3分
@@ -474,7 +476,7 @@ let coinSpawnTimer = 0;
 let fruits = [];
 let fruitSpawnTimer = 0;
 
-// 护盾计数器：每飞过5个管道（非击碎）获得1个护盾
+// 护盾计数器：每飞过若干管道（非击碎）获得1个护盾，小蓝(id:1)每4管（已削弱），其他皮肤每5管
 let pipesPassedForShield = 0;
 
 // 背景云朵：带漂移 + 尾部粒子拖尾 + 立体渐变
@@ -488,10 +490,12 @@ const clouds = [
 // skill 为皮肤技能（短名，空=无）；skillDesc 为技能详细说明（技能图鉴用）
 const SKINS = [
   { id:0, name:'小黄',     price:30,  body:'#ffd33d', wing:'#f7b500', beak:'#ff7a00', crown:false, glow:false, skill:'',                                              skillDesc:'' },
-  { id:1, name:'小蓝',     price:90,  body:'#4ec0ff', wing:'#2b8fd6', beak:'#ff9a3d', crown:false, glow:false, skill:'开局自带1层护盾，每跳3管再得1层',          skillDesc:'出生就带 1 层护盾：撞到管道时不直接死亡，先消耗这层护盾，并获得短暂无敌与向上弹开；此外每成功跳过 3 根管道，还会额外获得 1 层护盾，护盾续航更持久。' },
+  { id:1, name:'小蓝',     price:90,  body:'#4ec0ff', wing:'#2b8fd6', beak:'#ff9a3d', crown:false, glow:false, skill:'开局自带1层护盾，每跳4管再得1层',          skillDesc:'出生就带 1 层护盾：撞到管道时不直接死亡，先消耗这层护盾，并获得短暂无敌与向上弹开；此外每成功跳过 4 根管道，还会额外获得 1 层护盾，护盾续航更持久。' },
   { id:2, name:'薄荷',     price:150, body:'#5ee2a8', wing:'#34b984', beak:'#ff6f91', crown:false, glow:false, skill:'体积小，拾取范围不缩水',                    skillDesc:'天生体型更小，穿管更轻松；拾取范围按正常体型计算——果实和金币不会因为鸟变小而更难捡到。吃到护盾果（蓝色）时体积只增大一档，而其他皮肤会增大两档。' },
-  { id:3, name:'黄金神鸟', price:200, body:null,     wing:'#b8860b', beak:'#ff4500', crown:true,  glow:true,  skill:'大范围吸收金币，金币收益略增',              skillDesc:'自带磁吸光环：约 100 像素范围内的金币会自动朝你飞来；此外本局出现的金币会略多20%，攒钱包更快。' },
+  { id:3, name:'黄金神鸟', price:260, body:null,     wing:'#b8860b', beak:'#ff4500', crown:true,  glow:true,  skill:'吸金币15%暴击x3·金币增益+25%',           skillDesc:'自带磁吸光环：约 100 像素范围内的金币会自动朝你飞来。被动「暴击」：每次吸到金币有 15% 概率触发，该金币收益 ×3 并伴随全屏金光闪烁。结算「技能增益」：局内金币数量与刷新频率保持正常，本局吃到的金币在结算时按 25% 增益计入总金币（吃 N 个记约 N×1.25 个）。' },
   { id:4, name:'红鸟',     price:120, body:'#ff4d4d', wing:'#c0392b', beak:'#ffcf33', crown:false, glow:false, skill:'只生成红色果实，但果实效果较弱',            skillDesc:'场上只刷新红橙色果实（击碎管道+加分），但效果被削弱：每次只击碎 1 根管道、加 1 分，而不是普通鸟的碎 3 管+加 3 分。' },
+  { id:5, name:'白鸟',     price:180, body:'#ffffff', wing:'#d9d9e6', beak:'#ff7a00', crown:false, glow:false, skill:'吃灰果反变小并 +1 分',                  skillDesc:'吃到灰色果实时效果反转：不再扣分，而是「鸟体积明显变小」并「+1 分」。等于把原本的负面道具变成增益——越吃越灵巧还能涨分。' },
+  { id:6, name:'黑鸟',     price:220, body:'#1c1c1c', wing:'#444444', beak:'#ff7a00', crown:false, glow:false, skill:'30%刷黑果，吃后6秒双倍+免减益',     skillDesc:'游戏中有 30% 概率刷新黑色果实；吃到后进入 6 秒「双倍+免疫」状态：金币与红橙果实效果翻倍（碎管与加分×2），灰色果实免疫（正常缩小但不扣分）；但护盾果实只正常获得（不翻倍）。' },
 ];
 let currentSkin = 0;                       // 当前装备皮肤（登录后从本地 + owned 判定）
 let walletCoins = 0;                       // 玩家总金币（来自后端）
@@ -501,6 +505,7 @@ const GUEST_TRIAL_MAX = 1;                 // 游客最多体验 1 次皮肤切�
 let lastGain = 0;                           // 最近一局获得的金币（结束界面展示用）
 let unlockMsg = '';        // 购买 / 余额提示文字
 let unlockMsgTimer = 0;    // 提示剩余帧数
+let goldFlashTimer = 0;    // 黄金神鸟暴击金光剩余帧数
 let skinHit = [];          // 皮肤选择区的点击命中框（每帧重算）
 
 // 某皮肤是否已拥有（依据后端返回的 owned_skins）
@@ -522,6 +527,7 @@ function reset() {
   particles = [];
   coins = [];
   coinSpawnTimer = 0;
+  blackBuffTimer = 0;   // 黑鸟 buff 归零
   fruits = [];
   fruitSpawnTimer = 0;
   pipesPassedForShield = 0;
@@ -696,9 +702,11 @@ function spawnCoinSparkle(x, y) {
 function spawnFruit() {
   const cx = W + 20;
   const cr = 13;
-  // 随机选择果实类型：1=红橙(碎管), 2=蓝(护盾), 3=灰(减分缩小)
-  let type = 1 + Math.floor(Math.random() * 3);
-  if (currentSkin === 4) type = 1;   // 红鸟技能：只生成红色(红橙)果实
+  // 随机选择果实类型：1=红橙(碎管), 2=蓝(护盾), 3=灰(减分缩小), 4=黑(双倍buff)
+  let type;
+  if (currentSkin === 4) type = 1;                              // 红鸟技能：只生成红色(红橙)果实
+  else if (currentSkin === 6 && Math.random() < 0.30) type = 4; // 黑鸟技能：30% 概率刷黑色果实
+  else type = 1 + Math.floor(Math.random() * 3);
   // 与金币相同的防重叠逻辑
   let gapPipe = null;
   for (const p of pipes) {
@@ -725,6 +733,7 @@ function spawnFruitEffect(x, y, type) {
   let colors;
   if (type === 1) colors = ['#ff4500', '#ff8c00', '#ff6347'];
   else if (type === 2) colors = ['#4ec0ff', '#7ec8ff', '#2b8fd6'];
+  else if (type === 4) colors = ['#000000', '#2a2a2a', '#555555'];
   else colors = ['#aaa', '#888', '#ccc'];
   for (let i = 0; i < 18; i++) {
     const a = Math.random() * Math.PI * 2;
@@ -774,6 +783,8 @@ function applyFruitEffect(type, x, y) {
   sfxFruit(type);
   fruitsEaten++;
 
+  const dbl = blackBuffTimer > 0;   // 黑鸟 buff 期间：效果翻倍
+
   if (type === 1) {
     // 红橙色：击碎前方管道 + 加分
     // 红鸟(id:4)技能削弱版：只碎1管+加1分，避免「只刷红橙=纯上坡」超模；
@@ -783,27 +794,41 @@ function applyFruitEffect(type, x, y) {
     const ahead = pipes
       .filter(p => p.x + PIPE_W > bird.x - bird.r)
       .sort((a, b) => a.x - b.x);
-    const toCrush = ahead.slice(0, crushN);
+    const toCrush = ahead.slice(0, crushN * (dbl ? 2 : 1));   // buff 期间碎管数翻倍
     for (const p of toCrush) {
       spawnPipeCrushEffect(p.x, p.gapY, p.gap);
       pipesCrushed++;
     }
     pipes = pipes.filter(p => !toCrush.includes(p));
-    score += addScore;
+    score += addScore * (dbl ? 2 : 1);   // buff 期间加分翻倍
     sfxCrush();
   } else if (type === 2) {
-    // 蓝色：护盾 +1，鸟体积变大一点
-    bird.shield += 1;
+    // 蓝色护盾果：+1 护盾，体积增大一档
+    // 黑鸟 buff 期间：护盾果不翻倍（仅红橙/金币效果翻倍）
+    bird.shield += (currentSkin === 6 && dbl) ? 1 : (dbl ? 2 : 1);
     if (currentSkin === 2) {
-      // 薄荷天生体积小：护盾球的体积增幅也减小（+1，上限收紧到 baseR+3）
-      bird.r = Math.min(bird.r + 1, bird.baseR + 3);
+      // 薄荷天生体积小：护盾球的体积增幅也较小（+1，上限收紧到 baseR+3）
+      bird.r = Math.min(bird.r + (dbl ? 2 : 1), bird.baseR + 3);
     } else {
-      bird.r = Math.min(bird.r + 2, bird.baseR + 6);
+      bird.r = Math.min(bird.r + (dbl ? 4 : 2), bird.baseR + 6);
     }
+  } else if (type === 4) {
+    // 黑色：开启 6 秒「双倍 + 免疫减益」buff
+    blackBuffTimer = 360;   // 360 帧 ≈ 6 秒（dt 已按 60fps 归一化）
   } else {
-    // 灰色：扣 2 分，鸟体积明显变小（体积范围 ±6，与蓝色护盾果对称）
-    score = Math.max(0, score - 2);
-    bird.r = Math.max(bird.r - 3, bird.baseR - 6);
+    // 灰色果实
+    if (blackBuffTimer > 0) {
+      // 黑鸟 buff 期间：免疫减益——灰色果实正常缩小体积，但不再扣分
+      bird.r = Math.max(bird.r - 3, bird.baseR - 6);
+    } else if (currentSkin === 5) {
+      // 白鸟技能：吃灰果反转为增益——体积变小且 +1 分（不扣分）
+      score += 1;
+      bird.r = Math.max(bird.r - 3, bird.baseR - 6);
+    } else {
+      // 普通鸟：扣 2 分，鸟体积明显变小（体积范围 ±6，与蓝色护盾果对称）
+      score = Math.max(0, score - 2);
+      bird.r = Math.max(bird.r - 3, bird.baseR - 6);
+    }
   }
 }
 
@@ -812,6 +837,8 @@ function update(dt) {
   if (dt === undefined) dt = 1;   // 兜底：无参数时按 60fps 一帧
   // 皮肤提示倒计时（按时间而非帧数，各刷新率下时长一致）
   if (unlockMsgTimer > 0) unlockMsgTimer -= dt;
+  if (goldFlashTimer > 0) goldFlashTimer -= dt;
+  if (blackBuffTimer > 0) blackBuffTimer -= dt;   // 黑鸟双倍 buff 倒计时（按时间，与刷新率无关）
   // 背景音乐：游戏中播放，其他状态停止（静音时自动停）
   if (state === 'playing' && !muted) startBGM(); else stopBGM();
   // 粒子始终更新（任何状态下都继续飘散、淡出）
@@ -870,8 +897,8 @@ function update(dt) {
         p.passed = true;
         score++;
         pipesPassedForShield++;               // 飞过的管道计数（击碎的不算）
-        // 蓝鸟皮肤技能：每跳过 3 根管道额外获得 1 层护盾；其他皮肤维持每 5 根
-        const shieldEvery = (currentSkin === 1) ? 3 : 5;
+        // 每跳过若干管道获得 1 层护盾：小蓝(id:1)每4管（已削弱），其他皮肤每5管
+        const shieldEvery = currentSkin === 1 ? 4 : 5;
         if (pipesPassedForShield >= shieldEvery) {
           bird.shield++;
           pipesPassedForShield = 0;
@@ -885,6 +912,7 @@ function update(dt) {
     // 7. 金币系统：随机间隔刷新，向左移动，碰到小鸟则吃掉 +1 分
     coinSpawnTimer += dt;
     if (coinSpawnTimer > 55 + Math.random() * 75) {   // 55~130 帧随机间隔（按时间）
+      // 黄金神鸟局内金币数量保持正常，仅通过结算「技能增益」提升（见下方 recordScore）
       spawnCoin();
       coinSpawnTimer = 0;
     }
@@ -911,8 +939,14 @@ function update(dt) {
         const dy = bird.y - (c.y + Math.sin(c.bob) * 4);
         if (dx * dx + dy * dy < (coinPickR + c.r) * (coinPickR + c.r)) {
           c.eaten = true;
-          score++;                    // 吃到金币额外 +1 分
-          coinsEaten++;
+          // 金币收益：黑鸟 buff 期间翻倍为 +2；黄金神鸟被动「暴击」15% 概率本次 x3 并触发金光
+          let coinVal = (blackBuffTimer > 0) ? 2 : 1;
+          if (currentSkin === 3 && Math.random() < 0.15) {
+            coinVal *= 3;            // 暴击：本次吸到的金币 ×3
+            goldFlashTimer = 16;     // 触发全屏金光（约 0.27 秒淡出）
+          }
+          score += coinVal;
+          coinsEaten += coinVal;
           spawnCoinSparkle(c.x, c.y);
           sfxCoin();
         }
@@ -985,8 +1019,8 @@ function gameOver() {
     newRecord = true;
     localStorage.setItem((loggedIn && !isGuest) ? 'bossBirdBest_' + currentUser : 'bossBirdBest', best); // 最高分存本地，下次还在
   }
-  // 黄金神鸟皮肤技能：本局产生的金币略多一点（结算系数约 1.2，吃 5 个多约 1 个，温和不超标）
-  const coinGain = (currentSkin === 3) ? Math.round(coinsEaten * 1.2) : coinsEaten;
+  // 黄金神鸟皮肤技能：结算时金币按「技能增益」25% 提升（吃 N 个记 ≈ N×1.5，温和不超标）
+  const coinGain = (currentSkin === 3) ? Math.round(coinsEaten * 1.5) : coinsEaten;
   recordScore(score, coinGain);   // 记入历史并按本局吃到金币数结算总金币（最多保留最近 100 局）
 }
 
@@ -1056,13 +1090,24 @@ function draw() {
   // 护盾层数（左上角，仅游戏进行中显示；待机/结算界面不残留）
   if (state === 'playing' && bird.shield > 0) drawShieldHUD(bird.shield);
 
+  // 黑鸟双倍 buff 计时（左上角，仅游戏进行中显示）
+  if (state === 'playing' && blackBuffTimer > 0) drawBlackBuffHUD();
+
   // 护盾进度条（盾图标下方，显示距下次护盾还差几根管道）
   if (state === 'playing' && pipesPassedForShield > 0) {
     const bx = 12, by = 52, bw = 28, bh = 4;
     ctx.fillStyle = 'rgba(0,0,0,0.3)';
     ctx.fillRect(bx, by, bw, bh);
     ctx.fillStyle = '#5ad1ff';
-    ctx.fillRect(bx, by, bw * (pipesPassedForShield / (currentSkin === 1 ? 3 : 5)), bh);
+    const shieldEveryHud = currentSkin === 1 ? 4 : 5;
+    ctx.fillRect(bx, by, bw * (pipesPassedForShield / shieldEveryHud), bh);
+  }
+
+  // 黄金神鸟暴击金光（全屏金色闪光，极短）
+  if (goldFlashTimer > 0) {
+    const ga = Math.min(1, goldFlashTimer / 16) * 0.5;
+    ctx.fillStyle = 'rgba(255, 215, 0, ' + ga + ')';
+    ctx.fillRect(0, 0, W, H);
   }
 
   // 待机界面
@@ -1236,6 +1281,10 @@ function drawFruit(f) {
     // 蓝色：护盾
     c1 = '#7ec8ff'; c2 = '#4ec0ff'; c3 = '#1a6ec4';
     glow = '#4ec0ff'; symbol = '\u76FE';   // 盾
+  } else if (f.type === 4) {
+    // 黑色：双倍增益
+    c1 = '#3a3a3a'; c2 = '#161616'; c3 = '#000000';
+    glow = '#b06bff'; symbol = '\u00D7 2';   // ×2
   } else {
     // 灰色：减分缩小
     c1 = '#d0d0d0'; c2 = '#999999'; c3 = '#555555';
@@ -1352,6 +1401,8 @@ function drawBird() {
   ctx.beginPath();
   ctx.arc(0, 0, bird.r, 0, Math.PI * 2);
   ctx.fill();
+  if (s.id === 5) { ctx.strokeStyle = '#b9b9c8'; ctx.lineWidth = 1.5; ctx.stroke(); }   // 白鸟描边
+  else if (s.id === 6) { ctx.strokeStyle = '#7a6a9a'; ctx.lineWidth = 1.5; ctx.stroke(); }  // 黑鸟描边（紫调，保证在天空/夜空中可见）
   ctx.shadowBlur = 0;   // 关掉阴影，避免影响后续绘制
 
   // 翅膀（按皮肤上色）
@@ -1429,6 +1480,21 @@ function drawShieldHUD(count) {
   ctx.lineWidth = 1.5;
   ctx.stroke();
   drawText('×' + count, x, y + 1, 'bold 15px sans-serif', '#063a55', 'center');
+}
+
+// 黑鸟双倍 buff 计时 HUD（左上角，紫色圆 + 剩余秒数）
+function drawBlackBuffHUD() {
+  const x = 26, y = 78;
+  ctx.fillStyle = '#b06bff';
+  ctx.beginPath();
+  ctx.arc(x, y, 14, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  const secs = Math.max(1, Math.ceil(blackBuffTimer / 60));
+  drawText('×2', x, y + 1, 'bold 14px sans-serif', '#fff', 'center');
+  drawText(secs + 's', x, y + 22, 'bold 10px sans-serif', 'rgba(255,255,255,0.85)', 'center');
 }
 
 // 皮肤选择区：在待机/结束界面底部画一排角色，可点选
