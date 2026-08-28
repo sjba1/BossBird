@@ -945,13 +945,10 @@ function update(dt) {
 
     // 5. 碰撞检测
     if (bird.invuln <= 0) {
-      // 飞到屏幕顶部：直接给 195 分并进入结算界面
+      // 飞到屏幕顶部：撞天花板不结算、不给 195 分，小鸟卡在顶部等重力拉回，游戏继续
       if (bird.y - bird.r < 0) {
-        score = 195;            // 到达顶部 -> 直接结算 195 分
-        bird.y = bird.r;        // 让鸟停在顶部（结算界面可见）
-        bird.vy = 0;
-        gameOver();             // 弹出游戏结束 / 结算界面
-        return;
+        bird.y = bird.r;        // 停在天花板下方，不再往上飞
+        bird.vy = 0;            // 速度归零，靠重力自然回落，不触发结算
       }
       // 撞到地面：直接死亡，不再消耗护盾（地面=绝对死亡线）
       else if (bird.y + bird.r > H - GROUND_H) {
@@ -1056,8 +1053,8 @@ function draw() {
     if (d > 0) drawText('Lv.' + d, W / 2, 118, 'bold 14px sans-serif', 'rgba(255,255,255,0.7)', 'center');
   }
 
-  // 护盾层数（左上角）
-  if (bird.shield > 0) drawShieldHUD(bird.shield);
+  // 护盾层数（左上角，仅游戏进行中显示；待机/结算界面不残留）
+  if (state === 'playing' && bird.shield > 0) drawShieldHUD(bird.shield);
 
   // 护盾进度条（盾图标下方，显示距下次护盾还差几根管道）
   if (state === 'playing' && pipesPassedForShield > 0) {
@@ -1641,7 +1638,7 @@ function _loadHistLS() {
   catch { return []; }
 }
 function _saveHistLS(arr) {
-  try { localStorage.setItem(_lsHistKey(), JSON.stringify(arr.slice(0, 100))); }
+  try { localStorage.setItem(_lsHistKey(), JSON.stringify(arr.slice(0, 1000))); }  // 离线兜底上限扩到 1000 条
   catch {}
 }
 
@@ -2284,15 +2281,7 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
 
-// 自动登录：同设备下次打开若已持有有效 token，直接进入（无需再输密码）
-const savedToken = localStorage.getItem('bossBirdToken');
-if (savedToken) {
-  token = savedToken;
-  fetch('/api/scores', { headers: { 'Authorization': 'Bearer ' + token } })
-    .then(r => r.ok ? r.json() : Promise.reject())
-    .then(j => { loginAs(j.username, token, false); })
-    .catch(() => { token = null; localStorage.removeItem('bossBirdToken'); showLoginView(); });
-}
+// 注：已移除「同设备自动登录」——按需求每次进入游戏都必须手动输入账号与密码。
 
 // 启动！
 loop();

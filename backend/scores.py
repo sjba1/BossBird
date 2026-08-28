@@ -6,8 +6,8 @@ from jwt_utils import decode_token
 
 scores_bp = Blueprint("scores", __name__)
 
-# 历史容量上限：每用户最多保留 / 返回最近 100 局
-HISTORY_LIMIT = 100
+# 历史容量上限：每用户最多保留 / 返回最近 1000 局
+HISTORY_LIMIT = 1000
 
 
 def _auth_username():
