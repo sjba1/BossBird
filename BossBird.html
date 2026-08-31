@@ -150,6 +150,47 @@
   .skillClose { width:100%; margin-top:4px; padding:10px; border:none; border-radius:10px;
     background:#3a3c66; color:#fff; font-size:14px; font-weight:bold; cursor:pointer; }
   .skillClose:active { transform:translateY(2px); }
+  /* 皮肤商店浮层：从底部「皮肤商店 ›」或点未拥有的皮肤进入，可浏览 / 购买 / 装备 */
+  #shopOverlay {
+    position:fixed; inset:0; background:rgba(10,11,25,.93);
+    display:none; align-items:center; justify-content:center; z-index:80;
+  }
+  .shopCard {
+    width:340px; max-width:90vw; max-height:86vh; overflow-y:auto;
+    background:#1e2040; border:1px solid #33345f; border-radius:16px;
+    padding:18px 16px; box-shadow:0 12px 50px rgba(0,0,0,.5); color:#fff;
+  }
+  .shopTitle { color:#ffe08a; text-align:center; font-size:19px; font-weight:bold; margin-bottom:2px; }
+  .shopWallet {
+    background:rgba(255,211,61,.12); border:1px solid rgba(255,211,61,.35);
+    border-radius:10px; padding:8px; margin-bottom:10px;
+    text-align:center; font-size:14px; color:#ffe08a; font-weight:bold;
+  }
+  #shopMsg { min-height:17px; text-align:center; font-size:12.5px; color:#ff9a9a; margin-bottom:6px; }
+  #shopMsg.ok { color:#9effa0; }
+  .shopRow {
+    display:flex; align-items:center; gap:10px;
+    background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.08);
+    border-radius:12px; padding:10px 11px; margin-bottom:9px;
+  }
+  .shopRow.on { border-color:rgba(255,211,61,.5); background:rgba(255,211,61,.1); }
+  .shopBird { width:34px; height:34px; border-radius:50%; flex:none; border:2px solid rgba(255,255,255,.75); }
+  .shopInfo { flex:1; min-width:0; }
+  .shopName { font-size:14px; font-weight:bold; color:#fff; }
+  .shopSkill { font-size:11.5px; color:#9ec5ff; margin-top:3px; line-height:1.45; }
+  .shopPrice { font-size:11.5px; color:#ffe08a; margin-top:3px; }
+  .shopBtn {
+    flex:none; padding:7px 10px; border:none; border-radius:9px;
+    font-size:12.5px; font-weight:bold; cursor:pointer; white-space:nowrap;
+  }
+  .shopBtn.buy   { background:#ffd33d; color:#3a2c00; }
+  .shopBtn.equip { background:#3a5fd9; color:#fff; }
+  .shopBtn.cant  { background:rgba(255,255,255,.1); color:#ff9a9a; cursor:default; }
+  .shopBtn.done  { background:rgba(255,255,255,.08); color:#9effa0; cursor:default; }
+  .shopBtn:active:not(.cant):not(.done) { transform:translateY(2px); }
+  .shopClose { width:100%; margin-top:4px; padding:10px; border:none; border-radius:10px;
+    background:#3a3c66; color:#fff; font-size:14px; font-weight:bold; cursor:pointer; }
+  .shopClose:active { transform:translateY(2px); }
 </style>
 </head>
 <body>
@@ -220,6 +261,18 @@
     <div class="skillSub">全部角色皮肤及其技能说明</div>
     <div id="skillList"></div>
     <button id="skillClose" class="skillClose">关闭</button>
+  </div>
+</div>
+
+<!-- 皮肤商店浮层：点底部「皮肤商店 ›」或点未拥有的皮肤进入 -->
+<div id="shopOverlay">
+  <div class="shopCard">
+    <div class="shopTitle">皮肤商店</div>
+    <div class="skillSub">用局内金币兑换角色，永久拥有</div>
+    <div class="shopWallet">我的金币 <span id="shopCoins">0</span></div>
+    <div id="shopMsg"></div>
+    <div id="shopList"></div>
+    <button id="shopClose" class="shopClose">返回游戏</button>
   </div>
 </div>
 
@@ -491,10 +544,10 @@ const clouds = [
 const SKINS = [
   { id:0, name:'小黄',     price:30,  body:'#ffd33d', wing:'#f7b500', beak:'#ff7a00', crown:false, glow:false, skill:'',                                              skillDesc:'' },
   { id:1, name:'小蓝',     price:90,  body:'#4ec0ff', wing:'#2b8fd6', beak:'#ff9a3d', crown:false, glow:false, skill:'开局自带1层护盾，每跳4管再得1层',          skillDesc:'出生就带 1 层护盾：撞到管道时不直接死亡，先消耗这层护盾，并获得短暂无敌与向上弹开；此外每成功跳过 4 根管道，还会额外获得 1 层护盾，护盾续航更持久。' },
-  { id:2, name:'薄荷',     price:150, body:'#5ee2a8', wing:'#34b984', beak:'#ff6f91', crown:false, glow:false, skill:'体积小，拾取范围不缩水',                    skillDesc:'天生体型更小，穿管更轻松；拾取范围按正常体型计算——果实和金币不会因为鸟变小而更难捡到。吃到护盾果（蓝色）时体积只增大一档，而其他皮肤会增大两档。' },
+  { id:2, name:'薄荷',     price:150, body:'#5ee2a8', wing:'#34b984', beak:'#ff6f91', crown:false, glow:false, skill:'体积小，蓝色果实debuff效果减少，拾取范围不缩水',                    skillDesc:'天生体型更小，穿管更轻松；拾取范围按正常体型计算——果实和金币不会因为鸟变小而更难捡到。吃到护盾果（蓝色）时体积只增大一档，而其他皮肤会增大两档。' },
   { id:3, name:'黄金神鸟', price:260, body:null,     wing:'#b8860b', beak:'#ff4500', crown:true,  glow:true,  skill:'吸金币15%暴击x3·金币增益+50%',           skillDesc:'自带磁吸光环：约 100 像素范围内的金币会自动朝你飞来。被动「暴击」：每次吸到金币有 15% 概率触发，该金币收益 ×3 并伴随全屏金光闪烁。结算「技能增益」：局内金币数量与刷新频率保持正常，本局吃到的金币在结算时按 50% 增益计入总金币（吃 N 个记约 N×1.5 个）。' },
   { id:4, name:'红鸟',     price:120, body:'#ff4d4d', wing:'#c0392b', beak:'#ffcf33', crown:false, glow:false, skill:'只生成红色果实，但果实效果较弱',            skillDesc:'场上只刷新红橙色果实（击碎管道+加分），但效果被削弱：每次只击碎 1 根管道、加 1 分，而不是普通鸟的碎 3 管+加 3 分。' },
-  { id:5, name:'白鸟',     price:180, body:'#ffffff', wing:'#d9d9e6', beak:'#ff7a00', crown:false, glow:false, skill:'吃灰果反变小并 +1 分',                  skillDesc:'吃到灰色果实时效果反转：不再扣分，而是「鸟体积明显变小」并「+1 分」。等于把原本的负面道具变成增益——越吃越灵巧还能涨分。' },
+  { id:5, name:'白鸟',     price:180, body:'#ffffff', wing:'#d9d9e6', beak:'#ff7a00', crown:false, glow:false, skill:'吃灰果+1 分',                  skillDesc:'吃到灰色果实时效果反转：不再扣分，而是「鸟体积明显变小」并「+1 分」。等于把原本的负面道具变成增益——越吃越灵巧还能涨分。' },
   { id:6, name:'黑鸟',     price:220, body:'#1c1c1c', wing:'#444444', beak:'#ff7a00', crown:false, glow:false, skill:'30%刷黑果，吃后6秒双倍+免减益',     skillDesc:'游戏中有 30% 概率刷新黑色果实；吃到后进入 6 秒「双倍+免疫」状态：金币与红橙果实效果翻倍（碎管与加分×2），灰色果实免疫（正常缩小但不扣分）；但护盾果实只正常获得（不翻倍）。' },
 ];
 let currentSkin = 0;                       // 当前装备皮肤（登录后从本地 + owned 判定）
@@ -1258,7 +1311,8 @@ function draw() {
   }
 
   // 技能图鉴按钮（待机 / 结束界面左上角，点击打开图鉴）
-  if (state === 'ready' || state === 'over') drawSkillCodexBtn();
+  // 皮肤商店按钮（待机 / 结束界面左下角，点击打开商店）
+  if (state === 'ready' || state === 'over') { drawSkillCodexBtn(); drawShopBtn(); }
 
   // 静音图标（右上角，所有界面都显示）
   drawMuteIcon();
@@ -1624,14 +1678,17 @@ function drawLock(cx, cy) {
 // 画出皮肤选择条
 function drawSkinPicker() {
   layoutSkins();
+  const ty = H - 78 - 38;
   if (isGuest) {
     const left = GUEST_TRIAL_MAX - guestSkinTrials;
     const txt = left > 0
       ? '试玩模式 · 还能换 ' + left + ' 次其他皮肤（小黄鸟随时可切回）'
       : '试玩已用完（共 ' + GUEST_TRIAL_MAX + ' 次），可随时切回小黄鸟';
-    drawText(txt, W / 2, H - 78 - 26, '13px sans-serif', left > 0 ? '#ffe08a' : '#ff9a9a', 'center');
+    drawText(txt, W / 2, ty, '13px sans-serif', left > 0 ? '#ffe08a' : '#ff9a9a', 'center');
+    skinShopHit = null;   // 游客已解锁全部皮肤，不需要商店入口
   } else {
-    drawText('选择角色皮肤（点金币兑换）', W / 2, H - 78 - 26, '13px sans-serif', '#fff', 'center');
+    // 皮肤商店入口改到左下角按钮（drawShopBtn），这里只保留提示
+    drawText('点圆点可直接装备已拥有的皮肤', W / 2, ty + 16, '11px sans-serif', '#8a8cc0', 'center');
   }
   for (const h of skinHit) {
     const s = SKINS[h.id];
@@ -1779,6 +1836,14 @@ const skillList = document.getElementById('skillList');
 const skillCloseBtn = document.getElementById('skillClose');
 let skillBtnHit = null;          // 画布上的「技能图鉴」按钮命中框
 let friendsBtnHit = { x: 93, y: 22, r: 16 };   // ready 界面「好友」按钮命中框（每帧重算）
+
+// ── 皮肤商店浮层 ──
+const shopOverlay  = document.getElementById('shopOverlay');
+const shopList     = document.getElementById('shopList');
+const shopCoins    = document.getElementById('shopCoins');
+const shopMsg      = document.getElementById('shopMsg');
+const shopCloseBtn = document.getElementById('shopClose');
+let skinShopHit = null;          // 画布底部「皮肤商店 ›」文字的命中框（每帧重算）
 
 // 内存中的历史：[{s:分数, t:毫秒时间戳}]，最新在前（当前页，从后端拉取后填充）
 let history = [];
@@ -2115,6 +2180,44 @@ function drawSkillCodexBtn() {
   skillBtnHit = { x: x + w / 2, y: y + h / 2, r: 16 };
 }
 
+// 皮肤商店按钮：待机 / 结束界面左下角（圆角卡片 + 购物袋图标，呼应金币 / 皮肤主题）
+// 与「退出 / 好友 / 技能图鉴」同属一套深色半透明 UI 家族，金色描边 / 文案点出"消费换肤"语义
+function drawShopBtn() {
+  if (isGuest) { skinShopHit = null; return; }   // 游客已解锁全部皮肤，无需商店入口
+  const w = 98, h = 28, x = 12, y = H - 36;
+  ctx.save();
+  // 柔光：让按钮在白天 / 黄昏 / 夜晚任意天空色下都醒目
+  ctx.shadowColor = 'rgba(255, 196, 70, .45)';
+  ctx.shadowBlur = 12;
+  // 深色半透明卡片（顶部略亮、底部略深，做出轻微立体感）
+  const g = ctx.createLinearGradient(0, y, 0, y + h);
+  g.addColorStop(0, 'rgba(30, 26, 52, .80)');
+  g.addColorStop(1, 'rgba(16, 14, 30, .85)');
+  ctx.fillStyle = g;
+  roundRect(x, y, w, h, 12); ctx.fill();
+  ctx.shadowBlur = 0;
+  // 金色描边
+  ctx.lineWidth = 1.6;
+  ctx.strokeStyle = 'rgba(255, 209, 102, .92)';
+  roundRect(x, y, w, h, 12); ctx.stroke();
+  // 购物袋图标（金色：袋身 + 提手）
+  const ix = x + 17, iy = y + h / 2;
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = '#ffd166';
+  ctx.fillStyle = 'rgba(255, 209, 102, .20)';
+  roundRect(ix - 8, iy - 4, 16, 12, 3); ctx.fill(); ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(ix, iy - 4, 4.5, Math.PI, 0);   // 提手
+  ctx.stroke();
+  // 文案
+  ctx.fillStyle = '#ffe08a';
+  ctx.font = 'bold 13px sans-serif';
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillText('皮肤商店', x + 32, iy + 0.5);
+  ctx.restore();
+  skinShopHit = { x, y, w, h };
+}
+
 // 打开好友面板：拉取我的好友码 + 好友榜单（榜单缓存到 myFriends，点按钮才显示）
 async function openFriendsPanel() {
   friendsOverlay.style.display = 'flex';
@@ -2317,30 +2420,30 @@ function canvasPos(e) {
   };
 }
 
-// 点击是否命中皮肤选择区：命中则切换皮肤并吞掉这次点击
+// 点击是否命中皮肤选择区：命中则装备 / 进商店，并吞掉这次点击
 function handleSkinTap(px, py) {
   for (const h of skinHit) {
     const dx = px - h.x, dy = py - h.y;
     if (dx * dx + dy * dy <= (h.r + 5) * (h.r + 5)) {
       const s = SKINS[h.id];
-      if (isUnlocked(s)) {
-        if (h.id === currentSkin) return true;   // 点已装备皮肤：不消耗试玩次数
-        // 小黄鸟(id:0)在游客模式无限次：随时可切回，不消耗试玩次数
-        if (isGuest && h.id === 0) {
-          currentSkin = 0; persistSkin(); return true;
-        }
-        // 游客试玩上限：非小黄鸟皮肤已用完则禁止（小黄鸟仍可随时切回）
-        if (isGuest && guestSkinTrials >= GUEST_TRIAL_MAX) {
-          unlockMsg = '试玩次数已用完（共 ' + GUEST_TRIAL_MAX + ' 次），可切回小黄鸟重玩';
-          unlockMsgTimer = 150;
-          return true;   // 吞掉点击
-        }
-        if (isGuest) guestSkinTrials++;          // 切换到其他(非小黄鸟)皮肤：消耗 1 次试玩
-        currentSkin = h.id;          // 已拥有：直接装备
-        persistSkin();
-      } else {
-        buySkin(h.id);               // 未拥有：触发金币兑换
+      if (!isUnlocked(s)) {
+        openShop(h.id);            // 未拥有：进商店购买，不在画布上直接扣币（防误触）
+        return true;
       }
+      if (h.id === currentSkin) return true;   // 点已装备皮肤：不消耗试玩次数
+      // 小黄鸟(id:0)在游客模式无限次：随时可切回，不消耗试玩次数
+      if (isGuest && h.id === 0) {
+        currentSkin = 0; persistSkin(); return true;
+      }
+      // 游客试玩上限：非小黄鸟皮肤已用完则禁止（小黄鸟仍可随时切回）
+      if (isGuest && guestSkinTrials >= GUEST_TRIAL_MAX) {
+        unlockMsg = '试玩次数已用完（共 ' + GUEST_TRIAL_MAX + ' 次），可切回小黄鸟重玩';
+        unlockMsgTimer = 150;
+        return true;   // 吞掉点击
+      }
+      if (isGuest) guestSkinTrials++;          // 切换到其他(非小黄鸟)皮肤：消耗 1 次试玩
+      currentSkin = h.id;          // 已拥有：直接装备
+      persistSkin();
       return true;   // 命中皮肤区，不再触发拍翅膀
     }
   }
@@ -2386,6 +2489,100 @@ async function buySkin(id) {
   }
 }
 
+/* ---------- 皮肤商店浮层 ---------- */
+// 打开商店：渲染全部皮肤（按价格升序）；focusId 用于在列表里定位到刚点的那只
+function openShop(focusId) {
+  renderShop();
+  setShopMsg('', true);
+  shopOverlay.style.display = 'flex';
+  if (typeof focusId === 'number') {
+    const el = shopList.querySelector('.shopRow[data-id="' + focusId + '"]');
+    if (el && el.scrollIntoView) el.scrollIntoView({ block: 'center' });
+  }
+}
+function closeShop() { shopOverlay.style.display = 'none'; }
+
+function setShopMsg(text, ok) {
+  shopMsg.textContent = text;
+  shopMsg.className = ok ? 'ok' : '';
+}
+
+// 渲染商店列表：每只鸟一行（颜色圆点 + 名称 + 技能 + 价格 + 右侧按钮）
+function renderShop() {
+  const order = SKINS.map((s, i) => i).sort((a, b) => SKINS[a].price - SKINS[b].price);
+  shopCoins.textContent = walletCoins;
+  shopList.innerHTML = order.map((idx) => {
+    const s = SKINS[idx];
+    const owned = isUnlocked(s);
+    const on = idx === currentSkin;
+    const dot = s.body ? s.body : '#ffd700';
+    let label, cls;
+    if (on)           { label = '已装备';                          cls = 'done'; }
+    else if (owned)   { label = isGuest ? '试玩' : '装备';          cls = 'equip'; }
+    else if (isGuest) { label = '试玩';                             cls = 'equip'; }
+    else if (walletCoins < s.price) { label = '差 ' + (s.price - walletCoins); cls = 'cant'; }
+    else              { label = '购买 ' + s.price;                  cls = 'buy'; }
+    const skillLine = s.skill || '基础角色，无特殊技能';
+    const priceLine = owned ? (isGuest ? '游客试玩，数据不保存' : '已拥有') : '售价 ' + s.price + ' 金币';
+    return '<div class="shopRow' + (on ? ' on' : '') + '" data-id="' + idx + '">' +
+      '<span class="shopBird" style="background:' + dot + '"></span>' +
+      '<div class="shopInfo">' +
+        '<div class="shopName">' + esc(s.name) + '</div>' +
+        '<div class="shopSkill">' + esc(skillLine) + '</div>' +
+        '<div class="shopPrice">' + priceLine + '</div>' +
+      '</div>' +
+      '<button class="shopBtn ' + cls + '" data-id="' + idx + '">' + label + '</button>' +
+    '</div>';
+  }).join('');
+}
+
+// 商店里的点按：装备 / 试玩 / 购买
+async function handleShopAction(id) {
+  const s = SKINS[id];
+  if (id === currentSkin) return;
+  // 游客：沿用试玩次数规则（切回小黄鸟不消耗次数）
+  if (isGuest) {
+    if (id === 0) {
+      currentSkin = 0; persistSkin();
+      renderShop(); setShopMsg('已切回小黄鸟', true);
+      return;
+    }
+    if (guestSkinTrials >= GUEST_TRIAL_MAX) {
+      setShopMsg('试玩次数已用完（共 ' + GUEST_TRIAL_MAX + ' 次），可切回小黄鸟重玩', false);
+      return;
+    }
+    guestSkinTrials++;
+    currentSkin = id; persistSkin();
+    renderShop(); setShopMsg('试玩中：' + s.name, true);
+    return;
+  }
+  // 已拥有：直接装备
+  if (ownedSkins.has(id)) {
+    currentSkin = id; persistSkin();
+    renderShop(); setShopMsg('已装备 ' + s.name, true);
+    return;
+  }
+  // 未拥有：金币够才买（buySkin 内部乐观扣币 + 后端校正 + 失败回滚）
+  if (walletCoins < s.price) {
+    setShopMsg('金币不足，还差 ' + (s.price - walletCoins) + ' 金币', false);
+    return;
+  }
+  await buySkin(id);
+  renderShop();
+  if (ownedSkins.has(id)) setShopMsg('购买成功，已装备 ' + s.name, true);
+  else setShopMsg('购买失败，请重试', false);
+}
+
+// 事件委托：列表重渲染后按钮依然有效
+shopList.addEventListener('click', (e) => {
+  const btn = e.target.closest('.shopBtn');
+  if (!btn || btn.classList.contains('done') || btn.classList.contains('cant')) return;
+  const id = Number(btn.getAttribute('data-id'));
+  if (Number.isFinite(id)) handleShopAction(id);
+});
+shopCloseBtn.onclick = closeShop;
+shopOverlay.addEventListener('click', (e) => { if (e.target === shopOverlay) closeShop(); });
+
 // 翻页：delta 为 -1（上一页）或 1（下一页）
 function goHistPage(delta) {
   const np = histPage + delta;
@@ -2426,6 +2623,14 @@ function handleTap(p) {
     if (skillBtnHit) {
       const sdx = p.x - skillBtnHit.x, sdy = p.y - skillBtnHit.y;
       if (sdx * sdx + sdy * sdy <= skillBtnHit.r * skillBtnHit.r) { openSkillCodex(); return; }
+    }
+    // 点击底部「皮肤商店 ›」文字 -> 打开商店浮层
+    if (skinShopHit) {
+      const sh = skinShopHit;
+      if (p.x >= sh.x && p.x <= sh.x + sh.w && p.y >= sh.y && p.y <= sh.y + sh.h) {
+        openShop();
+        return;
+      }
     }
     if (handleSkinTap(p.x, p.y)) return;
   }
