@@ -168,6 +168,9 @@
   }
   #shopMsg { min-height:17px; text-align:center; font-size:12.5px; color:#ff9a9a; margin-bottom:6px; }
   #shopMsg.ok { color:#9effa0; }
+  #shopPreview { display:block; width:100%; height:110px; margin:6px 0 10px;
+    background:radial-gradient(circle at 50% 42%, rgba(255,255,255,.06), rgba(0,0,0,.28));
+    border-radius:12px; border:1px solid rgba(255,255,255,.08); }
   .shopRow {
     display:flex; align-items:center; gap:10px;
     background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.08);
@@ -267,9 +270,10 @@
 <!-- 皮肤商店浮层：点底部「皮肤商店 ›」或点未拥有的皮肤进入 -->
 <div id="shopOverlay">
   <div class="shopCard">
-    <div class="shopTitle">皮肤商店</div>
+    <div class="shopTitle">皮肤总览</div>
     <div class="skillSub">用局内金币兑换角色，永久拥有</div>
     <div class="shopWallet">我的金币 <span id="shopCoins">0</span></div>
+    <canvas id="shopPreview" width="240" height="110"></canvas>
     <div id="shopMsg"></div>
     <div id="shopList"></div>
     <button id="shopClose" class="shopClose">返回游戏</button>
@@ -292,7 +296,13 @@ const H = canvas.height;  // 画布高 640
 let lastError = null;
 
 window.onerror = function(msg, url, line, col, err) {
-  lastError = { msg: String(msg), line, col, stack: err && err.stack ? String(err.stack) : '' };
+  const stack = err && err.stack ? String(err.stack) : '';
+  let ln = line, cl = col;
+  if (!ln && stack) {                        // inline 脚本抛错时 line/col 可能为 0，从 stack 兜底解析
+    const m = stack.match(/BossBird\.html:(\d+):(\d+)/);
+    if (m) { ln = +m[1]; cl = +m[2]; }
+  }
+  lastError = { msg: String(msg), line: ln, col: cl, stack };
   console.error('[BossBird global error]', msg, 'line:', line, 'col:', col);
   return false;
 };
@@ -320,7 +330,7 @@ function drawErrorScreen() {
   }
   let y = 24;
   for (const line of lines) {
-    ctx.fillText(line.slice(0, 48), 18, y);
+    ctx.fillText(line.slice(0, 220), 18, y);
     y += 17;
   }
   ctx.restore();
@@ -465,14 +475,14 @@ function stopBGM() {
 }
 
 /* ---------- 难度递增系统：随分数提升，管道变快/缝隙变窄/生成更密 ---------- */
-// 每 15 分提升一级，上限 10 级
-function getDifficulty() { return Math.min(Math.floor(score / 15), 10); }
+// 每 30 分提升一级，上限 12 级（对应 SKY_GRADIENTS 索引 0~12，共 13 项）
+function getDifficulty() { return Math.min(Math.floor(score / 30), 12); }
 // 当前管道移动速度（2.2 -> 3.7）
 function curSpeed() { return SPEED + getDifficulty() * 0.15; }
 // 当前缝隙高度（160 -> 100，有下限保护）
-function curGap()   { return Math.max(GAP - getDifficulty() * 6, 100); }
-// 当前管道生成间隔帧数（95 -> 55）
-function curSpawn() { return Math.max(SPAWN_EVERY - getDifficulty() * 4, 55); }
+function curGap()   { return Math.max(GAP - getDifficulty() * 5, 110); }
+// 当前管道生成间隔帧数（95 -> 65，调慢：100 分后管子不再过密，降低难度）
+function curSpawn() { return Math.max(SPAWN_EVERY - getDifficulty() * 3, 68); }
 
 // 天空渐变色随难度变化：白天 -> 黄昏 -> 夜晚
 const SKY_GRADIENTS = [
@@ -487,6 +497,8 @@ const SKY_GRADIENTS = [
   ['#2a1840', '#100820'],  // 8
   ['#1a1030', '#080418'],  // 9
   ['#0c0818', '#040208'],  // 10 夜晚
+  ['#080414', '#020106'],  // 11 深夜（高难度满级前段）
+  ['#040208', '#000000'],  // 12 深夜（满级最终态）
 ];
 
 // 本局统计：吃金币数、击碎管道数、吃果实数
@@ -559,7 +571,6 @@ let lastGain = 0;                           // 最近一局获得的金币（结
 let unlockMsg = '';        // 购买 / 余额提示文字
 let unlockMsgTimer = 0;    // 提示剩余帧数
 let goldFlashTimer = 0;    // 黄金神鸟暴击金光剩余帧数
-let skinHit = [];          // 皮肤选择区的点击命中框（每帧重算）
 
 // 某皮肤是否已拥有（依据后端返回的 owned_skins）
 function isUnlocked(s) { return ownedSkins.has(s.id); }
@@ -1270,7 +1281,6 @@ function draw() {
     if (Math.floor(Date.now() / 500) % 2) {
       drawText('点击屏幕 / 空格 起飞', W / 2, H - 135, 'bold 17px sans-serif', '#fff', 'center');
     }
-    drawSkinPicker();
     // 待机界面也提示试玩次数用尽等信息（原仅结束界面有）
     if (unlockMsgTimer > 0) drawText(unlockMsg, W / 2, 112, 'bold 16px sans-serif', '#ff9a9a', 'center');
   }
@@ -1307,7 +1317,6 @@ function draw() {
     if (Math.floor(Date.now() / 500) % 2) {
       drawText('点击重新开始', W / 2, py + 100, '16px sans-serif', '#fff', 'center');
     }
-    drawSkinPicker();
   }
 
   // 技能图鉴按钮（待机 / 结束界面左上角，点击打开图鉴）
@@ -1647,73 +1656,8 @@ function drawBlackBuffHUD() {
   drawText(secs + 's', x, y + 22, 'bold 10px sans-serif', 'rgba(255,255,255,0.85)', 'center');
 }
 
-// 皮肤选择区：在待机/结束界面底部画一排角色，可点选
-function layoutSkins() {
-  skinHit = [];
-  const r = 15;
-  const gap = 46;
-  // 按价格升序排列（显示顺序按价格，但 id 仍是真实皮肤 id，不影响装备/拥有判定）
-  const order = SKINS.map((s, i) => i).sort((a, b) => SKINS[a].price - SKINS[b].price);
-  const n = order.length;
-  const startX = W / 2 - (n - 1) * gap / 2;
-  const y = H - 78;
-  for (let i = 0; i < n; i++) skinHit.push({ x: startX + i * gap, y, r, id: order[i] });
-}
 
-// 小锁图标（画在已锁皮肤圆上）
-function drawLock(cx, cy) {
-  ctx.strokeStyle = '#fff';
-  ctx.lineWidth = 1.6;
-  ctx.beginPath();
-  ctx.arc(cx, cy - 2, 3.5, Math.PI, 0);   // 锁梁
-  ctx.stroke();
-  ctx.fillStyle = '#fff';
-  ctx.fillRect(cx - 4, cy - 2, 8, 7);      // 锁体
-  ctx.fillStyle = 'rgba(0,0,0,.5)';
-  ctx.beginPath();
-  ctx.arc(cx, cy + 1, 1.3, 0, Math.PI * 2); // 钥匙孔
-  ctx.fill();
-}
 
-// 画出皮肤选择条
-function drawSkinPicker() {
-  layoutSkins();
-  const ty = H - 78 - 38;
-  if (isGuest) {
-    const left = GUEST_TRIAL_MAX - guestSkinTrials;
-    const txt = left > 0
-      ? '试玩模式 · 还能换 ' + left + ' 次其他皮肤（小黄鸟随时可切回）'
-      : '试玩已用完（共 ' + GUEST_TRIAL_MAX + ' 次），可随时切回小黄鸟';
-    drawText(txt, W / 2, ty, '13px sans-serif', left > 0 ? '#ffe08a' : '#ff9a9a', 'center');
-    skinShopHit = null;   // 游客已解锁全部皮肤，不需要商店入口
-  } else {
-    // 皮肤商店入口改到左下角按钮（drawShopBtn），这里只保留提示
-    drawText('点圆点可直接装备已拥有的皮肤', W / 2, ty + 16, '11px sans-serif', '#8a8cc0', 'center');
-  }
-  for (const h of skinHit) {
-    const s = SKINS[h.id];
-    const owned = isUnlocked(s);
-    // 圆形底色 = 该皮肤颜色
-    ctx.beginPath();
-    ctx.arc(h.x, h.y, h.r, 0, Math.PI * 2);
-    ctx.fillStyle = s.body ? s.body : '#ffd700';
-    ctx.fill();
-    // 选中描白边加粗，否则半透明白边
-    ctx.lineWidth = (h.id === currentSkin) ? 3 : 1.5;
-    ctx.strokeStyle = (h.id === currentSkin) ? '#fff' : 'rgba(255,255,255,.6)';
-    ctx.stroke();
-    if (!owned) {
-      // 未拥有：压暗 + 锁 + 兑换价格
-      ctx.fillStyle = 'rgba(0,0,0,.45)';
-      ctx.beginPath(); ctx.arc(h.x, h.y, h.r, 0, Math.PI * 2); ctx.fill();
-      drawLock(h.x, h.y);
-      drawText('金币' + s.price, h.x, h.y + h.r + 8, 'bold 10px sans-serif', '#ffe08a', 'center');
-    } else if (h.id !== currentSkin) {
-      // 已拥有但未装备：提示可点击装备
-      drawText('可装备', h.x, h.y + h.r + 8, 'bold 10px sans-serif', '#9effa0', 'center');
-    }
-  }
-}
 
 /* ---------- 果实图鉴（开始界面展示3种果实效果）---------- *//* ---------- 果实图鉴（开始界面展示3种果实效果）---------- */
 function drawFruitGuide(sy) {
@@ -2183,7 +2127,7 @@ function drawSkillCodexBtn() {
 // 皮肤商店按钮：待机 / 结束界面左下角（圆角卡片 + 购物袋图标，呼应金币 / 皮肤主题）
 // 与「退出 / 好友 / 技能图鉴」同属一套深色半透明 UI 家族，金色描边 / 文案点出"消费换肤"语义
 function drawShopBtn() {
-  if (isGuest) { skinShopHit = null; return; }   // 游客已解锁全部皮肤，无需商店入口
+  // 游客也走商店换肤（handleShopAction 内已实现试玩次数逻辑），不再拦截
   const w = 98, h = 28, x = 12, y = H - 36;
   ctx.save();
   // 柔光：让按钮在白天 / 黄昏 / 夜晚任意天空色下都醒目
@@ -2213,7 +2157,7 @@ function drawShopBtn() {
   ctx.fillStyle = '#ffe08a';
   ctx.font = 'bold 13px sans-serif';
   ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-  ctx.fillText('皮肤商店', x + 32, iy + 0.5);
+  ctx.fillText('皮肤总览', x + 32, iy + 0.5);
   ctx.restore();
   skinShopHit = { x, y, w, h };
 }
@@ -2403,7 +2347,11 @@ function loop(now) {
     update(dt);
     draw();
   } catch (e) {
-    lastError = { msg: String(e && e.message || e), line: 0, col: 0, stack: e && e.stack ? String(e.stack) : '' };
+    const stack = e && e.stack ? String(e.stack) : '';
+    let ln = 0, cl = 0;
+    const m = stack.match(/BossBird\.html:(\d+):(\d+)/);
+    if (m) { ln = +m[1]; cl = +m[2]; }
+    lastError = { msg: String(e && e.message || e), line: ln, col: cl, stack };
     try { drawErrorScreen(); } catch (_) {}
   }
   requestAnimationFrame(loop);
@@ -2420,35 +2368,6 @@ function canvasPos(e) {
   };
 }
 
-// 点击是否命中皮肤选择区：命中则装备 / 进商店，并吞掉这次点击
-function handleSkinTap(px, py) {
-  for (const h of skinHit) {
-    const dx = px - h.x, dy = py - h.y;
-    if (dx * dx + dy * dy <= (h.r + 5) * (h.r + 5)) {
-      const s = SKINS[h.id];
-      if (!isUnlocked(s)) {
-        openShop(h.id);            // 未拥有：进商店购买，不在画布上直接扣币（防误触）
-        return true;
-      }
-      if (h.id === currentSkin) return true;   // 点已装备皮肤：不消耗试玩次数
-      // 小黄鸟(id:0)在游客模式无限次：随时可切回，不消耗试玩次数
-      if (isGuest && h.id === 0) {
-        currentSkin = 0; persistSkin(); return true;
-      }
-      // 游客试玩上限：非小黄鸟皮肤已用完则禁止（小黄鸟仍可随时切回）
-      if (isGuest && guestSkinTrials >= GUEST_TRIAL_MAX) {
-        unlockMsg = '试玩次数已用完（共 ' + GUEST_TRIAL_MAX + ' 次），可切回小黄鸟重玩';
-        unlockMsgTimer = 150;
-        return true;   // 吞掉点击
-      }
-      if (isGuest) guestSkinTrials++;          // 切换到其他(非小黄鸟)皮肤：消耗 1 次试玩
-      currentSkin = h.id;          // 已拥有：直接装备
-      persistSkin();
-      return true;   // 命中皮肤区，不再触发拍翅膀
-    }
-  }
-  return false;
-}
 
 // 持久化当前皮肤选择（登录用户按用户名隔离）
 function persistSkin() {
@@ -2502,6 +2421,52 @@ function openShop(focusId) {
 }
 function closeShop() { shopOverlay.style.display = 'none'; }
 
+// 商店换肤预览：浮层内 canvas 实时画一只静止的鸟，反映所选皮肤
+const shopPreviewCanvas = document.getElementById('shopPreview');
+const shopPreviewCtx = shopPreviewCanvas ? shopPreviewCanvas.getContext('2d') : null;
+let lastPreviewId = -1;
+function drawShopPreview(id) {
+  if (!shopPreviewCtx) return;
+  const s = SKINS[id] || SKINS[0];
+  const W2 = shopPreviewCanvas.width, H2 = shopPreviewCanvas.height;
+  shopPreviewCtx.clearRect(0, 0, W2, H2);
+  const r = 28;
+  shopPreviewCtx.save();
+  shopPreviewCtx.translate(W2 / 2, H2 / 2);
+  if (s.glow) { shopPreviewCtx.shadowColor = '#ffd700'; shopPreviewCtx.shadowBlur = 22; }
+  if (s.body) {
+    shopPreviewCtx.fillStyle = s.body;
+  } else {
+    const grd = shopPreviewCtx.createRadialGradient(-2, -2, 1.5, 0, 0, r + 3);
+    grd.addColorStop(0, '#fff6c2'); grd.addColorStop(0.5, '#ffd700'); grd.addColorStop(1, '#d4880a');
+    shopPreviewCtx.fillStyle = grd;
+  }
+  shopPreviewCtx.beginPath(); shopPreviewCtx.arc(0, 0, r, 0, Math.PI * 2); shopPreviewCtx.fill();
+  shopPreviewCtx.shadowBlur = 0;
+  if (s.id === 5) { shopPreviewCtx.strokeStyle = '#b9b9c8'; shopPreviewCtx.lineWidth = 1.5; shopPreviewCtx.stroke(); }
+  else if (s.id === 6) { shopPreviewCtx.strokeStyle = '#7a6a9a'; shopPreviewCtx.lineWidth = 1.5; shopPreviewCtx.stroke(); }
+  // 翅膀
+  shopPreviewCtx.fillStyle = s.wing;
+  shopPreviewCtx.beginPath(); shopPreviewCtx.ellipse(-3, 2, 10, 6, 0.3, 0, Math.PI * 2); shopPreviewCtx.fill();
+  // 皇冠（黄金神鸟）
+  if (s.crown) {
+    shopPreviewCtx.fillStyle = '#ffd700'; shopPreviewCtx.strokeStyle = '#b8860b'; shopPreviewCtx.lineWidth = 1.2;
+    const y = -r - 4;
+    shopPreviewCtx.beginPath();
+    shopPreviewCtx.moveTo(-7, y + 6); shopPreviewCtx.lineTo(-7, y + 1); shopPreviewCtx.lineTo(-3.5, y + 4);
+    shopPreviewCtx.lineTo(0, y); shopPreviewCtx.lineTo(3.5, y + 4); shopPreviewCtx.lineTo(7, y + 1); shopPreviewCtx.lineTo(7, y + 6);
+    shopPreviewCtx.closePath(); shopPreviewCtx.fill(); shopPreviewCtx.stroke();
+  }
+  // 嘴（皮肤 beak 色）
+  shopPreviewCtx.fillStyle = s.beak || '#ff7a00';
+  shopPreviewCtx.beginPath(); shopPreviewCtx.moveTo(r - 2, -2); shopPreviewCtx.lineTo(r + 9, 1); shopPreviewCtx.lineTo(r - 2, 5); shopPreviewCtx.closePath(); shopPreviewCtx.fill();
+  // 眼睛（大眼炯炯有神：白眼球 + 黑瞳 + 白高光）
+  shopPreviewCtx.fillStyle = '#fff'; shopPreviewCtx.beginPath(); shopPreviewCtx.arc(7, -4, 8, 0, Math.PI * 2); shopPreviewCtx.fill();
+  shopPreviewCtx.fillStyle = '#1a1a1a'; shopPreviewCtx.beginPath(); shopPreviewCtx.arc(8, -4, 5, 0, Math.PI * 2); shopPreviewCtx.fill();
+  shopPreviewCtx.fillStyle = '#fff'; shopPreviewCtx.beginPath(); shopPreviewCtx.arc(10, -6, 1.8, 0, Math.PI * 2); shopPreviewCtx.fill();
+  shopPreviewCtx.restore();
+}
+
 function setShopMsg(text, ok) {
   shopMsg.textContent = text;
   shopMsg.className = ok ? 'ok' : '';
@@ -2534,6 +2499,7 @@ function renderShop() {
       '<button class="shopBtn ' + cls + '" data-id="' + idx + '">' + label + '</button>' +
     '</div>';
   }).join('');
+  drawShopPreview(currentSkin); lastPreviewId = currentSkin;
 }
 
 // 商店里的点按：装备 / 试玩 / 购买
@@ -2576,9 +2542,17 @@ async function handleShopAction(id) {
 // 事件委托：列表重渲染后按钮依然有效
 shopList.addEventListener('click', (e) => {
   const btn = e.target.closest('.shopBtn');
-  if (!btn || btn.classList.contains('done') || btn.classList.contains('cant')) return;
-  const id = Number(btn.getAttribute('data-id'));
-  if (Number.isFinite(id)) handleShopAction(id);
+  if (btn) {
+    if (btn.classList.contains('done') || btn.classList.contains('cant')) return;
+    const id = Number(btn.getAttribute('data-id'));
+    if (Number.isFinite(id)) handleShopAction(id);
+    return;
+  }
+  // 点击行本身（非按钮）=> 刷新顶部预览（纯展示，不消耗试玩次数）
+  const row = e.target.closest('.shopRow');
+  if (!row) return;
+  const id = Number(row.getAttribute('data-id'));
+  if (Number.isFinite(id) && id !== lastPreviewId) { lastPreviewId = id; drawShopPreview(id); }
 });
 shopCloseBtn.onclick = closeShop;
 shopOverlay.addEventListener('click', (e) => { if (e.target === shopOverlay) closeShop(); });
@@ -2632,7 +2606,6 @@ function handleTap(p) {
         return;
       }
     }
-    if (handleSkinTap(p.x, p.y)) return;
   }
   flap();
 }
