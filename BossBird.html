@@ -516,7 +516,7 @@ let pipeSpawnTimer = 0;   // 管道生成间隔计时（按 dt 累计）
 
 // 小鸟对象：位置、速度、半径、是否受击
 const bird = {
-  x: 80, y: H / 2, r: 14, baseR: 14,   // baseR = 初始半径，吃果实会改变 r
+  x: 80, y: H / 2, r: 14, baseR: 14, baseX: 80,   // baseX = 固定的初始横向位置（普通模式锁定此值）；baseR = 初始半径，吃果实会改变 r
   vy: 0,
   hurt: false,
   shield: 0,    // 护盾层数（可叠加）
@@ -528,6 +528,11 @@ let pipes = [];
 
 // 粒子数组（拍翅膀时喷在鸟后面的特效）
 let particles = [];
+
+// 灵魂升天：死亡瞬间先播一段灵魂离体升天的动画，再进入结算界面
+const DEATH_ANIM = 80;   // 死亡动画时长（帧，约 1.3 秒@60fps）
+let soul = null;          // 当前升天灵魂的数据（含皮肤色/死亡坐标），null 表示无
+let dyingTimer = 0;       // 死亡动画剩余帧数
 
 // 金币数组：游戏中随机刷新，吃到 +1 分
 let coins = [];
@@ -561,6 +566,7 @@ const SKINS = [
   { id:4, name:'红鸟',     price:120, body:'#ff4d4d', wing:'#c0392b', beak:'#ffcf33', crown:false, glow:false, skill:'只生成红色果实，但果实效果较弱',            skillDesc:'场上只刷新红橙色果实（击碎管道+加分），但效果被削弱：每次只击碎 1 根管道、加 1 分，而不是普通鸟的碎 3 管+加 3 分。' },
   { id:5, name:'白鸟',     price:180, body:'#ffffff', wing:'#d9d9e6', beak:'#ff7a00', crown:false, glow:false, skill:'吃灰果+1 分',                  skillDesc:'吃到灰色果实时效果反转：不再扣分，而是「鸟体积明显变小」并「+1 分」。等于把原本的负面道具变成增益——越吃越灵巧还能涨分。' },
   { id:6, name:'黑鸟',     price:220, body:'#1c1c1c', wing:'#444444', beak:'#ff7a00', crown:false, glow:false, skill:'30%刷黑果，吃后6秒双倍+免减益',     skillDesc:'游戏中有 30% 概率刷新黑色果实；吃到后进入 6 秒「双倍+免疫」状态：金币与红橙果实效果翻倍（碎管与加分×2），灰色果实免疫（正常缩小但不扣分）；但护盾果实只正常获得（不翻倍）。' },
+  { id:7, name:'空条承太郎', price:330, body:'#1b2330', wing:'#2c3850', beak:'#ffcf33', crown:false, glow:false, jotaro:true, skill:'过10/30/60管各获1充能，点充能使用5秒时停', skillDesc:'每局在分数达到 10、30、60 时各自动获得 1 次「时停」充能（最多 3 次）。游戏中左上角出现 3 个紫色替身拳图标，点击任意拳即可消耗 1 次充能，立即触发招牌技能「The World」：接下来 5 秒内，所有管道、金币、果实停止移动，鸟可以自由穿越而不会撞到地面。期间若吃到红橙色果实，触发声音彩蛋「欧拉」并额外 +10/+20/+30 分（时停中仍可再次使用充能，效果叠加）。致敬空条承太郎——把时间握在手里的人。' },
 ];
 let currentSkin = 0;                       // 当前装备皮肤（登录后从本地 + owned 判定）
 let walletCoins = 0;                       // 玩家总金币（来自后端）
@@ -576,14 +582,14 @@ let goldFlashTimer = 0;    // 黄金神鸟暴击金光剩余帧数
 function isUnlocked(s) { return ownedSkins.has(s.id); }
 
 /* ---------- 初始化 / 重置 ---------- */
-/* ---------- 传送门彩蛋：每局 13.333% 概率触发一次，进入夜空（有太阳·无管道）采集 10s ---------- */
+/* ---------- 传送门彩蛋：每局最多触发 2 次（每次约 15.8% 概率），进入夜空（有太阳·无管道）采集 10s ---------- */
 const PORTAL_ENABLED    = true;        // 总开关（想关就设 false）
-const PORTAL_CHANCE     = 0.13333;     // 每局触发概率（约 2/15）
+const PORTAL_CHANCE     = 0.158;     // 单次触发概率（每局独立 roll 两次，封顶 2 次）
 const PORTAL_DURATION   = 600;         // 夜空持续帧数（60fps ≈ 10 秒）
 const PORTAL_MIN_DELAY  = 8 * 60;      // 最早触发：开局后约 8 秒
 const PORTAL_MAX_DELAY  = 20 * 60;     // 最晚触发：开局后约 20 秒
-let portalArmed     = false;  // 本局是否已安排传送门
-let portalAt        = 0;      // 计划触发的 run 帧
+let portalCharges   = 0;      // 本局剩余可触发次数（0~2，每局最多触发 2 次）
+let portalAt        = 0;      // 计划触发的 run 帧（0 次时为 Infinity）
 let inPortal        = false;  // 当前是否在夜空场景
 let portalTimer     = 0;      // 夜空剩余帧数
 let portalFade      = 0;      // 0→1 淡入 / 1→0 淡出（交叉过渡用）
@@ -594,24 +600,172 @@ function enterPortal() {
   inPortal = true;
   portalTimer = PORTAL_DURATION;
   portalFade = 0;            // 从 0 淡入夜空
-  portalArmed = false;       // 一局只触发一次
+  portalCharges--;           // 消耗一次触发机会
+  if (portalCharges > 0) {   // 还有剩余次数：安排下一次（本次夜空结束后再隔 8~20 秒）
+    portalAt = runFrames + PORTAL_DURATION + PORTAL_MIN_DELAY + Math.random() * (PORTAL_MAX_DELAY - PORTAL_MIN_DELAY);
+  }
   pipes = [];                // 清空现有管道（被"传送"走）
 }
+
+/* ---------- 承太郎皮肤（空条承太郎）：时停技能 + 图片渲染 ---------- */
+let jotaroImg = null;                    // 抠掉青绿背景后的透明图（canvas 形式，可直接 drawImage）
+let jotaroCrop = null;                   // 图片中鸟+帽的非透明包围盒 {sx,sy,sw,sh}
+let jotaroCharges = 0;                   // 剩余时停充能（0~3）
+let jotaroMark = [false, false, false];  // 分数达 10/30/60 是否已各发 1 次
+let jotaroStop = 0;                      // 时停剩余帧数（5s = 300 帧 @60fps）
+const freeKeys = { w:false, a:false, s:false, d:false };  // 时停自由飞行：WASD / 方向键键盘状态
+let touchDrag = null;                    // 时停自由飞行：触摸/鼠标拖动目标位置 {x,y}，null=未拖
+let floatTexts = [];                     // 悬浮文字（欧拉彩蛋等）
+
+function currentSkinIsJotaro() {
+  const s = SKINS[currentSkin];
+  return !!(s && s.jotaro);
+}
+
+// 加载 Jo.jpg 并在浏览器内抠掉青绿背景，得到透明图 + 鸟体包围盒
+function loadJotaroImage() {
+  const img = new Image();
+  img.onload = function () {
+    try {
+      const c = document.createElement('canvas');
+      c.width = img.naturalWidth || img.width;
+      c.height = img.naturalHeight || img.height;
+      const cx = c.getContext('2d');
+      cx.drawImage(img, 0, 0);
+      const data = cx.getImageData(0, 0, c.width, c.height);
+      const d = data.data;
+      // 以左上角实际背景色为基准（自适应，避免硬编码色差把鸟抠花）
+      let br = 0, bg = 0, bb = 0, bn = 0;
+      for (let y = 0; y < 12; y++) for (let x = 0; x < 12; x++) {
+        const i = (y * c.width + x) * 4;
+        br += d[i]; bg += d[i + 1]; bb += d[i + 2]; bn++;
+      }
+      br /= bn; bg /= bn; bb /= bn;
+      const tol = 52;
+      let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1;
+      for (let y = 0; y < c.height; y++) {
+        for (let x = 0; x < c.width; x++) {
+          const i = (y * c.width + x) * 4;
+          if (d[i + 3] < 20) continue;               // 已透明，跳过
+          if (Math.abs(d[i] - br) < tol && Math.abs(d[i + 1] - bg) < tol && Math.abs(d[i + 2] - bb) < tol) {
+            d[i + 3] = 0;                            // 抠掉背景
+          } else {
+            if (x < x0) x0 = x;
+            if (x > x1) x1 = x;
+            if (y < y0) y0 = y;
+            if (y > y1) y1 = y;
+          }
+        }
+      }
+      cx.putImageData(data, 0, 0);
+      jotaroImg = c;
+      jotaroCrop = { sx: x0, sy: y0, sw: Math.max(1, x1 - x0 + 1), sh: Math.max(1, y1 - y0 + 1) };
+      // 商店已打开则立即用新图重绘预览
+      if (shopPreviewCtx && typeof lastPreviewId !== 'undefined') {
+        try { drawShopPreview(currentSkin); } catch (e) {}
+      }
+    } catch (e) { jotaroImg = null; jotaroCrop = null; }
+  };
+  img.onerror = function () { jotaroImg = null; jotaroCrop = null; };
+  img.src = 'Jo.jpg';
+}
+
+// 在指定画布以目标高度绘制承太郎精灵（自动按包围盒裁剪，居中）
+function drawJotaroSprite(g, cx, cy, targetH) {
+  if (!jotaroImg || !jotaroCrop) return false;
+  const cr = jotaroCrop;
+  const scale = targetH / cr.sh;
+  const dw = cr.sw * scale, dh = cr.sh * scale;
+  g.drawImage(jotaroImg, cr.sx, cr.sy, cr.sw, cr.sh, cx - dw / 2, cy - dh / 2, dw, dh);
+  return true;
+}
+
+// 触发时停：消耗 1 充能，冻结世界 5 秒（撞管仍会阵亡，无无敌帧）
+function triggerJotaroStop() {
+  if (!currentSkinIsJotaro()) return;
+  if (jotaroStop > 0) return;              // 已在时停中，不重复触发
+  if (jotaroCharges <= 0) return;
+  jotaroCharges--;
+  jotaroStop = 300;                        // 5 秒 @60fps
+  sfxJotaroStop();
+}
+
+// 欧拉彩蛋音效（使用截取的 Jojo 语音素材 ora.mp3）
+let oraAudio = null;
+function playOra() {
+  if (muted) return;
+  try {
+    if (!oraAudio) { oraAudio = new Audio('ora.mp3'); oraAudio.preload = 'auto'; }
+    oraAudio.currentTime = 0;
+    const pr = oraAudio.play();
+    if (pr && pr.catch) pr.catch(() => {});
+  } catch (e) {}
+}
+
+// 欧拉彩蛋悬浮文字
+function spawnOraText(bonus) {
+  floatTexts.push({ x: bird.x, y: bird.y - bird.r - 12, text: '欧拉 +' + bonus, life: 1, vy: -0.7 });
+}
+
+// 时停音效（程序合成，无需音频文件）
+function sfxJotaroStop() { playSlide(1200, 200, 0.45, 'sine', 0.12); }
+
+// 左上角充能 HUD（3 个紫色替身拳）：亮=有充能，暗=已用，激活时发光
+function drawJotaroHUD() {
+  if (!currentSkinIsJotaro()) return;
+  const r = 15, y = 120, gap = 40, x0 = 24;
+  for (let i = 0; i < 3; i++) {
+    const x = x0 + i * gap;
+    const lit = i < jotaroCharges;
+    const active = jotaroStop > 0;
+    ctx.save();
+    ctx.fillStyle = active ? 'rgba(176,107,255,0.95)' : (lit ? '#b06bff' : 'rgba(120,90,150,0.35)');
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.fillStyle = lit ? '#fff' : 'rgba(255,255,255,0.5)';
+    ctx.beginPath(); ctx.arc(x, y - 2, 4, 0, Math.PI * 2); ctx.fill();   // 拳面
+    ctx.fillRect(x - 2, y + 1, 4, 6);                                    // 拳带
+    if (active) {
+      ctx.shadowColor = '#b06bff'; ctx.shadowBlur = 16;
+      ctx.strokeStyle = '#e9c8ff'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(x, y, r + 4, 0, Math.PI * 2); ctx.stroke();
+      ctx.shadowBlur = 0;
+    }
+    ctx.restore();
+  }
+  if (jotaroStop > 0) {
+    const secs = (jotaroStop / 60).toFixed(1);
+    drawText('时停 ' + secs + 's', W / 2, 210, 'bold 22px sans-serif', 'rgba(200,150,255,0.95)', 'center');
+  }
+}
+
+loadJotaroImage();
 
 function reset() {
   state = 'ready';
   score = 0;
   frame = 0;
   pipeSpawnTimer = 0;
-  portalArmed = PORTAL_ENABLED && Math.random() < PORTAL_CHANCE;
-  portalAt = PORTAL_MIN_DELAY + Math.random() * (PORTAL_MAX_DELAY - PORTAL_MIN_DELAY);
+  portalCharges = 0;
+  if (PORTAL_ENABLED && Math.random() < PORTAL_CHANCE) portalCharges++;
+  if (PORTAL_ENABLED && Math.random() < PORTAL_CHANCE) portalCharges++;   // 独立 roll 两次，封顶 2 次
+  portalAt = (portalCharges > 0)
+    ? PORTAL_MIN_DELAY + Math.random() * (PORTAL_MAX_DELAY - PORTAL_MIN_DELAY)
+    : Infinity;   // 本局 0 次触发，永不触发
   inPortal = false;
   portalTimer = 0;
   portalFade = 0;
   portalFadingOut = false;
   runFrames = 0;
+  jotaroCharges = 0;
+  jotaroMark = [false, false, false];
+  jotaroStop = 0;
+  floatTexts = [];
   bird.y = H / 2;
+  bird.x = bird.baseX;   // 恢复固定横向位置（时停自由飞行可能改过 x）
   bird.vy = 0;
+  freeKeys.w = freeKeys.a = freeKeys.s = freeKeys.d = false;
+  touchDrag = null;
   bird.hurt = false;
   bird.shield = (currentSkin === 1) ? 1 : 0;   // 蓝鸟皮肤技能：开局自带 1 层护盾，其他皮肤 0
   bird.invuln = 0;
@@ -895,6 +1049,13 @@ function applyFruitEffect(type, x, y) {
     pipes = pipes.filter(p => !toCrush.includes(p));
     score += addScore * (dbl ? 2 : 1);   // buff 期间加分翻倍
     sfxCrush();
+    // 承太郎时停彩蛋：时停中吃红橙果实触发「欧拉」并额外 +10/+20/+30 分
+    if (currentSkinIsJotaro() && jotaroStop > 0) {
+      playOra();
+      const ob = [10, 20, 30][Math.floor(Math.random() * 3)];
+      score += ob;
+      spawnOraText(ob);
+    }
   } else if (type === 2) {
     // 蓝色护盾果：+1 护盾，体积增大一档
     // 黑鸟 buff 期间：护盾果不翻倍（仅红橙/金币效果翻倍）
@@ -943,6 +1104,10 @@ function update(dt) {
   }
   particles = particles.filter(p => p.life > 0);
 
+  // 欧拉彩蛋等悬浮文字更新（任何状态都淡出）
+  for (const ft of floatTexts) { ft.y += ft.vy * dt; ft.life -= 0.02 * dt; }
+  floatTexts = floatTexts.filter(ft => ft.life > 0);
+
   // 云朵漂移 + 尾部粒子生成（任何状态下都更新，让背景有生命力）
   for (const cl of clouds) {
     cl.x -= 0.3 * cl.s * dt;           // 缓慢向左飘
@@ -972,7 +1137,17 @@ function update(dt) {
   if (state === 'playing') {
     // 传送门彩蛋：累计本局帧数并判定触发 / 倒计时
     runFrames += dt;
-    if (PORTAL_ENABLED && portalArmed && !inPortal && !portalFadingOut && runFrames >= portalAt) {
+    // 承太郎：分数达 10/30/60 各得 1 次时停充能（最多 3）
+    if (currentSkinIsJotaro()) {
+      const ths = [10, 30, 60];
+      for (let i = 0; i < 3; i++) {
+        if (!jotaroMark[i] && score >= ths[i]) {
+          jotaroMark[i] = true;
+          jotaroCharges = Math.min(jotaroCharges + 1, 3);
+        }
+      }
+    }
+    if (PORTAL_ENABLED && portalCharges > 0 && !inPortal && !portalFadingOut && runFrames >= portalAt) {
       enterPortal();
     }
     if (inPortal) {
@@ -984,12 +1159,27 @@ function update(dt) {
       if (portalFade <= 0) { portalFade = 0; portalFadingOut = false; }
     }
 
-    // 1. 小鸟受重力影响下落（乘 dt：高刷屏不会下坠更快）
-    bird.vy += GRAVITY * dt;
-    bird.y  += bird.vy * dt;
-    if (bird.invuln > 0) bird.invuln -= dt;   // 无敌帧倒计时（按时间）
+    if (bird.invuln > 0) bird.invuln -= dt;
 
-    // 2. 定时生成管道（夜空期间暂停生成，返回后恢复）
+    if (jotaroStop > 0) {
+      // 自由飞行模式（时停）：取消重力，WASD / 触摸拖动直接控制位置
+      const sp = 5.6 * dt;                 // 自由飞行移动速度（按时间，高刷不更快）
+      if (freeKeys.a) bird.x -= sp;
+      if (freeKeys.d) bird.x += sp;
+      if (freeKeys.w) bird.y -= sp;
+      if (freeKeys.s) bird.y += sp;
+      if (touchDrag) { bird.x = touchDrag.x; bird.y = touchDrag.y; }
+      // 限制在屏幕内：左侧不飞出，右侧给到 0.6W 以便迎向新生成的管子；上下不穿天地
+      bird.x = Math.max(bird.r, Math.min(W * 0.6, bird.x));
+      bird.y = Math.max(bird.r, Math.min(H - GROUND_H - bird.r, bird.y));
+      bird.vy = 0;                         // 自由飞行无垂直速度概念
+    } else {
+      // 普通 flappy 模式：受重力影响下落（乘 dt：高刷屏不会下坠更快）
+      bird.vy += GRAVITY * dt;
+      bird.y  += bird.vy * dt;
+    }   // 无敌帧倒计时（按时间）
+
+    // 2. 定时生成管道（夜空 / 时停期间暂停生成，返回后恢复）
     if (!inPortal) {
       pipeSpawnTimer += dt;
       if (pipeSpawnTimer >= curSpawn()) {
@@ -999,7 +1189,8 @@ function update(dt) {
     }
 
     // 3. 管道向左移动，并给穿过的管道计分
-    const spd = curSpeed();
+    let spd = curSpeed();
+    if (jotaroStop > 0) jotaroStop -= dt;   // 时停倒计时递减，但世界照常运转（持续生成 + 左移）
     for (const p of pipes) {
       p.x -= spd * dt;
       if (!p.passed && p.x + PIPE_W < bird.x) {
@@ -1095,7 +1286,7 @@ function update(dt) {
       }
       // 撞到地面：直接死亡，不再消耗护盾（地面=绝对死亡线）
       else if (bird.y + bird.r > H - GROUND_H) {
-        gameOver();              // 接触地面立即结束，护盾在此无效
+        die();                   // 接触地面立即结束（先播灵魂升天，再结算），护盾在此无效
         return;
       }
     }
@@ -1116,6 +1307,10 @@ function update(dt) {
   } else if (state === 'ready') {
     // 待机时小鸟轻轻上下浮动，提示「点我」
     bird.y = H / 2 + Math.sin(Date.now() / 200) * 6;
+  } else if (state === 'dying') {
+    // 死亡动画进行中：递减计时，归零后正式结算
+    dyingTimer -= dt;
+    if (dyingTimer <= 0) finishDeath();
   }
 }
 
@@ -1134,6 +1329,89 @@ function gameOver() {
   recordScore(score, coinGain);   // 记入历史并按本局吃到金币数结算总金币（最多保留最近 100 局）
 }
 
+/* ---------- 灵魂升天：死亡瞬间先播一段灵魂离体升天的动画，再进入结算 ---------- */
+// 进入死亡（替代原本直接 gameOver）：保留结算，但先切到 dying 播动画
+function die() {
+  if (state !== 'playing') return;            // 防止重复触发
+  jotaroStop = 0;            // 死亡即取消时停，避免死后还在计时
+  touchDrag = null;
+  freeKeys.w = freeKeys.a = freeKeys.s = freeKeys.d = false;
+  const s = SKINS[currentSkin] || SKINS[0];
+  soul = {
+    x: bird.x, y: bird.y,
+    body: s.body, wing: s.wing, beak: s.beak,
+    glow: !!s.glow, crown: !!s.crown,
+    riseDist: H * 0.62,                        // 升天总位移
+  };
+  spawnSoulWisps(bird.x, bird.y);             // 灵魂离体时的光点拖尾
+  state = 'dying';
+  dyingTimer = DEATH_ANIM;
+  bird.hurt = true;                           // 让 dying 态尸体与结算时 drawBird() hurt 样式一致
+  sfxDeath();
+}
+
+// 动画播完：正式结算并切到结束界面（复用 gameOver 的计分/清理逻辑）
+function finishDeath() {
+  soul = null;
+  gameOver();
+}
+
+// 在死亡点喷出向上飘散的光点（复用现有粒子系统）
+function spawnSoulWisps(x, y) {
+  for (let i = 0; i < 14; i++) {
+    particles.push({
+      x: x + (Math.random() - 0.5) * bird.r,
+      y: y + (Math.random() - 0.5) * bird.r,
+      vx: (Math.random() - 0.5) * 0.6,
+      vy: -(0.8 + Math.random() * 1.4),         // 向上飘
+      life: 1,
+      size: Math.random() * 3 + 1.5,
+      color: 'rgba(200,230,255,0.9)',
+    });
+  }
+}
+
+// 绘制升天的灵魂：半透明发光、缓缓上升并淡出
+function drawSoul() {
+  if (!soul) return;
+  const t = 1 - Math.max(0, dyingTimer) / DEATH_ANIM;   // 进度 0→1
+  const alpha = Math.max(0, 1 - t * t);                 // 末段加速淡出
+  if (alpha <= 0) return;
+  const y = soul.y - t * soul.riseDist;                 // 上升
+  const x = soul.x + Math.sin(t * Math.PI * 3) * 8;     // 左右飘
+  const sc = 1 - 0.25 * t;                              // 升天中略微缩小
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(sc, sc);
+  // 外发光
+  ctx.shadowColor = soul.glow ? '#ffd700' : 'rgba(180,220,255,0.95)';
+  ctx.shadowBlur = 22;
+  ctx.globalAlpha = alpha;
+  // 身体（灵魂半透明，沿用皮肤色）
+  ctx.fillStyle = soul.body || 'rgba(200,230,255,0.9)';
+  ctx.beginPath(); ctx.arc(0, 0, bird.r * 0.92, 0, Math.PI * 2); ctx.fill();
+  ctx.shadowBlur = 0;
+  // 翅膀
+  ctx.globalAlpha = alpha * 0.8;
+  ctx.fillStyle = soul.wing;
+  ctx.beginPath(); ctx.ellipse(-4, 2, 8, 5, 0.3, 0, Math.PI * 2); ctx.fill();
+  // 皇冠（仅黄金神鸟）
+  if (soul.crown) {
+    ctx.fillStyle = '#ffd700'; ctx.strokeStyle = '#b8860b'; ctx.lineWidth = 1.2;
+    const cy = -bird.r - 4;
+    ctx.beginPath();
+    ctx.moveTo(-9, cy + 7); ctx.lineTo(-9, cy + 1); ctx.lineTo(-4.5, cy + 4);
+    ctx.lineTo(0, cy - 1); ctx.lineTo(4.5, cy + 4); ctx.lineTo(9, cy + 1); ctx.lineTo(9, cy + 7);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+  }
+  // 灵魂眼（暗色，区别于活鸟的圆眼）
+  ctx.globalAlpha = alpha * 0.9;
+  ctx.fillStyle = '#22303f';
+  ctx.beginPath(); ctx.arc(6, -4, 2.6, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
+
 /* ---------- 受伤结算：有护盾则消耗一层，否则死亡 ---------- */
 function takeHit() {
   if (bird.shield > 0) {
@@ -1144,7 +1422,7 @@ function takeHit() {
     sfxShield();
     return false;             // 没死
   }
-  gameOver();
+  die();
   return true;                // 死了
 }
 
@@ -1231,8 +1509,9 @@ function draw() {
   }
   ctx.globalAlpha = 1;
 
-  // 小鸟
-  drawBird();
+  // 小鸟（死亡动画期间：先画尸体（bird.hurt 样式）再画升天的灵魂）
+  if (state === 'dying') { drawBird(); drawSoul(); }
+  else drawBird();
 
   // 进行中：中央显示分数 + 难度等级
   if (state === 'playing') {
@@ -1252,6 +1531,16 @@ function draw() {
 
   // 黑鸟双倍 buff 计时（左上角，仅游戏进行中显示）
   if (state === 'playing' && blackBuffTimer > 0) drawBlackBuffHUD();
+
+  // 承太郎充能 HUD（左上角紫色替身拳 + 时停倒计时）
+  if (state === 'playing') drawJotaroHUD();
+
+  // 欧拉彩蛋等悬浮文字
+  for (const ft of floatTexts) {
+    ctx.globalAlpha = Math.max(0, ft.life);
+    drawText(ft.text, ft.x, ft.y, 'bold 18px sans-serif', '#ffd33d', 'center');
+  }
+  ctx.globalAlpha = 1;
 
   // 护盾进度条（盾图标下方，显示距下次护盾还差几根管道）
   if (state === 'playing' && pipesPassedForShield > 0) {
@@ -1551,6 +1840,23 @@ function drawBird() {
 
   // 无敌帧内闪烁，提示刚被护盾救了一命
   if (bird.invuln > 0) ctx.globalAlpha = (Math.floor(Date.now() / 80) % 2) ? 0.35 : 1;
+
+  // 承太郎皮肤：用抠好背景的图片绘制（帽子+脸），旋转跟随小鸟
+  if (s.jotaro) {
+    if (drawJotaroSprite(ctx, 0, 0, bird.r * 2.8)) {
+      if (bird.hurt) {
+        ctx.strokeStyle = '#000'; ctx.lineWidth = 2.5;
+        const ex = bird.r * 0.30, ey = -bird.r * 0.16;
+        ctx.beginPath();
+        ctx.moveTo(ex - 5, ey - 5); ctx.lineTo(ex + 5, ey + 5);
+        ctx.moveTo(ex + 5, ey - 5); ctx.lineTo(ex - 5, ey + 5);
+        ctx.stroke();
+      }
+      ctx.restore();
+      return;
+    }
+    // 图片未就绪：回退到程序化深色鸟
+  }
 
   // 黄金神鸟：身体发光
   if (s.glow) { ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 18; }
@@ -2430,40 +2736,64 @@ function drawShopPreview(id) {
   const s = SKINS[id] || SKINS[0];
   const W2 = shopPreviewCanvas.width, H2 = shopPreviewCanvas.height;
   shopPreviewCtx.clearRect(0, 0, W2, H2);
-  const r = 28;
+  const r = 28;  // 基础半径（皇冠/嘴定位参考）
+  const bodyRx = 26, bodyRy = 27;  // 身体略胖：横向加宽、纵向略高，比圆略瘦长
   shopPreviewCtx.save();
   shopPreviewCtx.translate(W2 / 2, H2 / 2);
+
+  // 承太郎皮肤：用抠好背景的图片作预览
+  if (s.jotaro) {
+    if (drawJotaroSprite(shopPreviewCtx, 0, 0, 84)) { shopPreviewCtx.restore(); return; }
+  }
+  // 身体（皮肤 body 色 / 黄金神鸟金色径向渐变 + 外发光）
   if (s.glow) { shopPreviewCtx.shadowColor = '#ffd700'; shopPreviewCtx.shadowBlur = 22; }
   if (s.body) {
     shopPreviewCtx.fillStyle = s.body;
   } else {
-    const grd = shopPreviewCtx.createRadialGradient(-2, -2, 1.5, 0, 0, r + 3);
+    const grd = shopPreviewCtx.createRadialGradient(-3, -3, 2, 0, 0, r + 4);
     grd.addColorStop(0, '#fff6c2'); grd.addColorStop(0.5, '#ffd700'); grd.addColorStop(1, '#d4880a');
     shopPreviewCtx.fillStyle = grd;
   }
-  shopPreviewCtx.beginPath(); shopPreviewCtx.arc(0, 0, r, 0, Math.PI * 2); shopPreviewCtx.fill();
+  shopPreviewCtx.beginPath(); shopPreviewCtx.ellipse(0, 0, bodyRx, bodyRy, 0, 0, Math.PI * 2); shopPreviewCtx.fill();
   shopPreviewCtx.shadowBlur = 0;
+  // 银/紫皮肤描边
   if (s.id === 5) { shopPreviewCtx.strokeStyle = '#b9b9c8'; shopPreviewCtx.lineWidth = 1.5; shopPreviewCtx.stroke(); }
   else if (s.id === 6) { shopPreviewCtx.strokeStyle = '#7a6a9a'; shopPreviewCtx.lineWidth = 1.5; shopPreviewCtx.stroke(); }
-  // 翅膀
+  // 翅膀（深色椭圆，贴在身体左下；放大并与眼睛拉开距离）
   shopPreviewCtx.fillStyle = s.wing;
-  shopPreviewCtx.beginPath(); shopPreviewCtx.ellipse(-3, 2, 10, 6, 0.3, 0, Math.PI * 2); shopPreviewCtx.fill();
-  // 皇冠（黄金神鸟）
+  shopPreviewCtx.beginPath(); shopPreviewCtx.ellipse(-4, 9, 14, 9, 0.3, 0, Math.PI * 2); shopPreviewCtx.fill();
+  // 皇冠（黄金神鸟）：三尖刺 + 中央红宝石装饰
   if (s.crown) {
     shopPreviewCtx.fillStyle = '#ffd700'; shopPreviewCtx.strokeStyle = '#b8860b'; shopPreviewCtx.lineWidth = 1.2;
     const y = -r - 4;
     shopPreviewCtx.beginPath();
-    shopPreviewCtx.moveTo(-7, y + 6); shopPreviewCtx.lineTo(-7, y + 1); shopPreviewCtx.lineTo(-3.5, y + 4);
-    shopPreviewCtx.lineTo(0, y); shopPreviewCtx.lineTo(3.5, y + 4); shopPreviewCtx.lineTo(7, y + 1); shopPreviewCtx.lineTo(7, y + 6);
-    shopPreviewCtx.closePath(); shopPreviewCtx.fill(); shopPreviewCtx.stroke();
+    shopPreviewCtx.moveTo(-9, y + 7); shopPreviewCtx.lineTo(-9, y + 1); shopPreviewCtx.lineTo(-4.5, y + 4);
+    shopPreviewCtx.lineTo(0, y - 1);                                       // 中央尖刺更高
+    shopPreviewCtx.lineTo(4.5, y + 4); shopPreviewCtx.lineTo(9, y + 1); shopPreviewCtx.lineTo(9, y + 7);
+    shopPreviewCtx.closePath();
+    shopPreviewCtx.fill(); shopPreviewCtx.stroke();
+    // 中央红宝石
+    shopPreviewCtx.fillStyle = '#ff3860'; shopPreviewCtx.strokeStyle = '#a01030'; shopPreviewCtx.lineWidth = 0.6;
+    shopPreviewCtx.beginPath(); shopPreviewCtx.arc(0, y + 4, 1.8, 0, Math.PI * 2); shopPreviewCtx.fill(); shopPreviewCtx.stroke();
   }
-  // 嘴（皮肤 beak 色）
+  // 嘴（皮肤 beak 色，更尖更长）
   shopPreviewCtx.fillStyle = s.beak || '#ff7a00';
-  shopPreviewCtx.beginPath(); shopPreviewCtx.moveTo(r - 2, -2); shopPreviewCtx.lineTo(r + 9, 1); shopPreviewCtx.lineTo(r - 2, 5); shopPreviewCtx.closePath(); shopPreviewCtx.fill();
-  // 眼睛（大眼炯炯有神：白眼球 + 黑瞳 + 白高光）
-  shopPreviewCtx.fillStyle = '#fff'; shopPreviewCtx.beginPath(); shopPreviewCtx.arc(7, -4, 8, 0, Math.PI * 2); shopPreviewCtx.fill();
-  shopPreviewCtx.fillStyle = '#1a1a1a'; shopPreviewCtx.beginPath(); shopPreviewCtx.arc(8, -4, 5, 0, Math.PI * 2); shopPreviewCtx.fill();
-  shopPreviewCtx.fillStyle = '#fff'; shopPreviewCtx.beginPath(); shopPreviewCtx.arc(10, -6, 1.8, 0, Math.PI * 2); shopPreviewCtx.fill();
+  shopPreviewCtx.beginPath();
+  shopPreviewCtx.moveTo(bodyRx - 1, -3);
+  shopPreviewCtx.lineTo(bodyRx + 15, 1);
+  shopPreviewCtx.lineTo(bodyRx - 1, 5);
+  shopPreviewCtx.closePath();
+  shopPreviewCtx.fill();
+  // 眼睛（上移 + 缩小，与下方翅膀拉开距离；黑眼影 + 白眼球 + 黑瞳）
+  // 黑眼影（半透明深色圆，比白眼球大一圈，营造"烟熏妆"）
+  shopPreviewCtx.fillStyle = 'rgba(20, 20, 30, 0.45)';
+  shopPreviewCtx.beginPath(); shopPreviewCtx.arc(7, -8, 8, 0, Math.PI * 2); shopPreviewCtx.fill();
+  // 白眼球
+  shopPreviewCtx.fillStyle = '#fff';
+  shopPreviewCtx.beginPath(); shopPreviewCtx.arc(7, -8, 6.5, 0, Math.PI * 2); shopPreviewCtx.fill();
+  // 黑瞳（前移：右缘贴齐白眼球右缘，右侧不留眼白；超出部分落在深色眼影内）
+  shopPreviewCtx.fillStyle = '#1a1a1a';
+  shopPreviewCtx.beginPath(); shopPreviewCtx.arc(9.5, -8, 4, 0, Math.PI * 2); shopPreviewCtx.fill();
   shopPreviewCtx.restore();
 }
 
@@ -2607,13 +2937,45 @@ function handleTap(p) {
       }
     }
   }
+  // 承太郎：点击左上角充能拳触发时停（手机/PC 通用，无需键盘）
+  if (state === 'playing' && currentSkinIsJotaro()) {
+    for (let i = 0; i < 3; i++) {
+      const hx = 24 + i * 40, hy = 120;
+      const dx = p.x - hx, dy = p.y - hy;
+      if (dx * dx + dy * dy <= 19 * 19) { triggerJotaroStop(); return; }
+    }
+  }
+  // 时停自由飞行中：触摸/点击进入「拖动跟随」模式（手机手指拖 / PC 鼠标拖），不再 flap
+  if (state === 'playing' && jotaroStop > 0) {
+    touchDrag = { x: p.x, y: p.y };
+    return;
+  }
   flap();
 }
 canvas.addEventListener('mousedown', onInput);
 canvas.addEventListener('touchstart', onInput, { passive: false });
+// 时停自由飞行：触摸/鼠标按住拖动，小鸟跟随手指（PC 也可用鼠标拖，或 WASD）
+canvas.addEventListener('touchmove', (e) => {
+  if (state === 'playing' && jotaroStop > 0) { e.preventDefault(); touchDrag = canvasPos(e); }
+}, { passive: false });
+canvas.addEventListener('touchend', () => { touchDrag = null; });
+canvas.addEventListener('mousemove', (e) => {
+  if (state === 'playing' && jotaroStop > 0 && (e.buttons & 1)) touchDrag = canvasPos(e);
+});
+canvas.addEventListener('mouseup', () => { touchDrag = null; });
 window.addEventListener('keydown', (e) => {
   if (e.code === 'Space') { e.preventDefault(); flap(); }
   if (e.code === 'KeyM') { muted = !muted; }
+  if (e.code === 'KeyW' || e.code === 'ArrowUp')    freeKeys.w = true;
+  if (e.code === 'KeyS' || e.code === 'ArrowDown')  freeKeys.s = true;
+  if (e.code === 'KeyA' || e.code === 'ArrowLeft')  freeKeys.a = true;
+  if (e.code === 'KeyD' || e.code === 'ArrowRight') freeKeys.d = true;
+});
+window.addEventListener('keyup', (e) => {
+  if (e.code === 'KeyW' || e.code === 'ArrowUp')    freeKeys.w = false;
+  if (e.code === 'KeyS' || e.code === 'ArrowDown')  freeKeys.s = false;
+  if (e.code === 'KeyA' || e.code === 'ArrowLeft')  freeKeys.a = false;
+  if (e.code === 'KeyD' || e.code === 'ArrowRight') freeKeys.d = false;
 });
 
 // PWA：注册 Service Worker（添加到主屏幕 / 离线缓存）
